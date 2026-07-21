@@ -6,12 +6,16 @@ function formatDate(date) {
     return `${year}-${month}-${day}`;
 }
 
+
 function getDayNumber(dateString) {
     const [year, month, day] = dateString.split("-").map(Number);
-    return Date.UTC(year, month - 1, day) / (1000 * 60 * 60 * 24);
+
+    return Date.UTC(year, month - 1, day) /
+        (1000 * 60 * 60 * 24);
 }
 
-function GoalTracker({ goal, goals, setGoals }) {
+
+function GoalTracker({ goal, setGoals }) {
 
     const currentMonth = new Date();
 
@@ -21,65 +25,90 @@ function GoalTracker({ goal, goals, setGoals }) {
 
     const year = currentMonth.getFullYear();
 
+
     const daysInMonth = new Date(
-        currentMonth.getFullYear(),
+        year,
         currentMonth.getMonth() + 1,
         0
     ).getDate();
 
-    const days = Array.from({ length: daysInMonth }, (_, i) => {
-        return new Date(
-            currentMonth.getFullYear(),
-            currentMonth.getMonth(),
-            i + 1
-        );
-    });
+
+
+    const days = Array.from(
+        { length: daysInMonth },
+        (_, i) =>
+            new Date(
+                year,
+                currentMonth.getMonth(),
+                i + 1
+            )
+    );
 
 
     function completeDay(day) {
-        const newGoals = goals.map((item) => {
+        const dateString = formatDate(day);
 
-            if (item.name === goal.name) {
+        setGoals((previousGoals) =>
+            previousGoals.map((item) => {
 
-                let updatedDates;
+                if (item.id === goal.id) {
 
-                if (item.completedDates.includes(formatDate(day))) {
-                    updatedDates = item.completedDates.filter(
-                        (date) => date !== formatDate(day)
-                    );
-                } else {
-                    updatedDates = [
-                        ...item.completedDates,
-                        formatDate(day),
-                    ];
+                    if (
+                        item.completedDates.includes(dateString)
+                    ) {
+                        return {
+                            ...item,
+                            completedDates:
+                                item.completedDates.filter(
+                                    (date) =>
+                                        date !== dateString
+                                ),
+                        };
+                    }
+
+                    return {
+                        ...item,
+                        completedDates: [
+                            ...item.completedDates,
+                            dateString,
+                        ],
+                    };
                 }
 
-                return {
-                    ...item,
-                    completedDates: updatedDates,
-                };
-            }
-
-            return item;
-        });
-
-        setGoals(newGoals);
+                return item;
+            })
+        );
+    }
+    function deleteGoal() {
+        setGoals((previousGoals) =>
+            previousGoals.filter((item) => item.id !== goal.id)
+        );
     }
 
-
     function getStreak() {
+
         const dates = [...goal.completedDates]
-            .sort((a, b) => a.localeCompare(b))
+            .sort()
             .map(getDayNumber);
+
 
         if (dates.length === 0) {
             return 0;
         }
 
+
         let streak = 1;
 
-        for (let i = dates.length - 1; i > 0; i--) {
-            const difference = dates[i] - dates[i - 1];
+
+        for (
+            let i = dates.length - 1;
+            i > 0;
+            i--
+        ) {
+
+            const difference =
+                dates[i] - dates[i - 1];
+
 
             if (difference === 1) {
                 streak++;
@@ -88,49 +117,93 @@ function GoalTracker({ goal, goals, setGoals }) {
             }
         }
 
+
         return streak;
     }
 
 
     return (
         <div>
+
             <h2>{goal.name}</h2>
 
-            <h3>{monthName} {year}</h3>
+            <h3>
+                {monthName} {year}
+            </h3>
+
 
             <div>
+
                 {days.map((day) => {
-                    const dateString = formatDate(day);
+
+                    const dateString =
+                        formatDate(day);
+
 
                     return (
                         <button
                             key={dateString}
-                            onClick={() => completeDay(day)}
+                            onClick={() =>
+                                completeDay(day)
+                            }
                         >
+
                             {day.getDate()}
-                            {goal.completedDates.includes(dateString) ? "✓" : ""}
+
+                            {
+                                goal.completedDates.includes(
+                                    dateString
+                                )
+                                    ? "✓"
+                                    : ""
+                            }
+
                         </button>
                     );
+
                 })}
+
             </div>
 
 
             <p>
-                Completed days:
-                {" "}
-                {[...goal.completedDates]
-                    .sort((a, b) => a.localeCompare(b))
-                    .map(date => Number(date.split("-")[2]))
-                    .join(", ")}
+                Completed days:{" "}
+                {
+                    goal.completedDates
+                        .sort()
+                        .map(
+                            (date) =>
+                                Number(
+                                    date.split("-")[2]
+                                )
+                        )
+                        .join(", ")
+                }
             </p>
 
 
             <p>
                 🔥 Streak: {getStreak()} days
             </p>
+            <p>
+                Completed days:{" "}
+                {goal.completedDates
+                    .sort()
+                    .map((date) => Number(date.split("-")[2]))
+                    .join(", ")}
+            </p>
+
+            <p>
+                🔥 Streak: {getStreak()} days
+            </p>
+
+            <button onClick={deleteGoal}>
+                🗑 Delete Goal
+            </button>
 
         </div>
     );
 }
+
 
 export default GoalTracker;

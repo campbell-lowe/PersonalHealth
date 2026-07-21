@@ -2,45 +2,47 @@ import { useState } from "react";
 import GoalTracker from "../components/GoalTracker";
 
 function PregnancyPrep() {
+  const [goals, setGoals] = useState([]);
+  const [newGoalName, setNewGoalName] = useState("");
 
-  const [goals, setGoals] = useState([
-    {
-      name: "Prenatal",
-      completedDates: [],
-    },
-    {
-      name: "Sugar Free",
-      completedDates: [],
-    },
-    {
-      name: "Pilates",
-      completedDates: [],
-    },
-    {
-      name: "Pelvic Floor Exercises",
-      completedDates: [],
-    },
-  ]);
+  function addGoal() {
+    if (newGoalName.trim() === "") {
+      return;
+    }
 
+    const newGoal = {
+      id: Date.now(),
+      name: newGoalName,
+      completedDates: [],
+    };
+
+    setGoals([...goals, newGoal]);
+    setNewGoalName("");
+  }
 
   return (
     <div>
       <h1>Pregnancy Prep</h1>
+      <h2>This is the place to set and track your pregnancy preparation goals.</h2>
 
-      {goals.map((goal) => (
-        <GoalTracker
-          key={goal.name}
-          goal={goal}
-          goals={goals}
-          setGoals={setGoals}
-        />
-      ))}
+      <input
+        type="text"
+        placeholder="Enter a goal..."
+        value={newGoalName}
+        onChange={(e) => setNewGoalName(e.target.value)}
+      />
 
-
-      <button>
+      <button onClick={addGoal}>
         + Add New Goal
       </button>
 
+      {goals.map((goal) => (
+        <GoalTracker
+          key={goal.id}
+          goal={goal}
+          setGoals={setGoals}
+        />
+      ))}
     </div>
   );
 }
