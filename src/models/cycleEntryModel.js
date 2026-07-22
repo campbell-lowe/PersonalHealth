@@ -2,7 +2,6 @@ export const emptyCycleEntry = {
   id: null,
 
   date: "",
-  cycleNumber: 1,
   cycleDay: 1,
 
   wristTemp: "",

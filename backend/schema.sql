@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS cycle_entries (
 
     date TEXT UNIQUE NOT NULL,
 
-    cycle_number INTEGER,
     cycle_day INTEGER,
 
     wrist_temp REAL,

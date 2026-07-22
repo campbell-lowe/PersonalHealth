@@ -1,13 +1,47 @@
-import CycleEntryForm from "../components/CycleEntryForm";
+import { useState } from "react";
+import AddCycleEntry from "./AddCycleEntry";
 
-function AddCycleEntry() {
+function CycleTracking() {
+  const [page, setPage] = useState("home");
+
+  if (page === "add") {
+    return (
+      <div>
+        <button onClick={() => setPage("home")}>
+          ← Back
+        </button>
+
+        <AddCycleEntry />
+      </div>
+    );
+  }
+
+  if (page === "dashboard") {
+    return (
+      <div>
+        <button onClick={() => setPage("home")}>
+          ← Back
+        </button>
+
+        <h1>Cycle Dashboard</h1>
+        <p>Coming soon!</p>
+      </div>
+    );
+  }
+
   return (
     <div>
-      <h1>Add Cycle Entry</h1>
+      <h1>Cycle Tracking</h1>
 
-      <CycleEntryForm />
+      <button onClick={() => setPage("add")}>
+        ➕ Add Cycle Entry
+      </button>
+
+      <button onClick={() => setPage("dashboard")}>
+        📊 View Dashboard
+      </button>
     </div>
   );
 }
 
-export default AddCycleEntry;
+export default CycleTracking;

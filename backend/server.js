@@ -1,11 +1,13 @@
 import express from "express";
 import cors from "cors";
 import "./database.js";
+import cycleRoutes from "./routes/cycleRoutes.js";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use("/api/cycle", cycleRoutes);
 
 
 app.get("/", (req, res) => {

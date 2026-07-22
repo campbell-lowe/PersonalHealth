@@ -3,6 +3,9 @@ import db from "../database.js";
 
 const router = express.Router();
 
+//
+// GET ALL ENTRIES
+//
 router.get("/", (req, res) => {
   const sql = `
     SELECT *
@@ -22,7 +25,6 @@ router.get("/", (req, res) => {
     const entries = rows.map((row) => ({
       id: row.id,
       date: row.date,
-      cycleNumber: row.cycle_number,
       cycleDay: row.cycle_day,
       wristTemp: row.wrist_temp,
       thermometerTemp: row.thermometer_temp,
@@ -44,10 +46,57 @@ router.get("/", (req, res) => {
   });
 });
 
+//
+// GET ONE ENTRY BY DATE
+//
+router.get("/:date", (req, res) => {
+  db.get(
+    "SELECT * FROM cycle_entries WHERE date = ?",
+    [req.params.date],
+    (err, row) => {
+      if (err) {
+        console.error(err);
+
+        return res.status(500).json({
+          error: err.message,
+        });
+      }
+
+      if (!row) {
+        return res.status(404).json({
+          message: "No entry found.",
+        });
+      }
+
+      res.json({
+        id: row.id,
+        date: row.date,
+        cycleDay: row.cycle_day,
+        wristTemp: row.wrist_temp,
+        thermometerTemp: row.thermometer_temp,
+        lhMorning: row.lh_morning,
+        lhNight: row.lh_night,
+        cmAmount: row.cm_amount,
+        cmType: row.cm_type,
+        bleeding: row.bleeding,
+        intercourse: Boolean(row.intercourse),
+        pregnancyTest: row.pregnancy_test,
+        symptoms: JSON.parse(row.symptoms || "[]"),
+        medications: JSON.parse(row.medications || "[]"),
+        weight: row.weight,
+        sleepHours: row.sleep_hours,
+        notes: row.notes,
+      });
+    }
+  );
+});
+
+//
+// CREATE OR UPDATE ENTRY
+//
 router.post("/", (req, res) => {
   const {
     date,
-    cycleNumber,
     cycleDay,
     wristTemp,
     thermometerTemp,
@@ -65,51 +114,49 @@ router.post("/", (req, res) => {
     notes,
   } = req.body;
 
- const sql = `
-INSERT INTO cycle_entries (
-    date,
-    cycle_number,
-    cycle_day,
-    wrist_temp,
-    thermometer_temp,
-    lh_morning,
-    lh_night,
-    cm_amount,
-    cm_type,
-    bleeding,
-    intercourse,
-    pregnancy_test,
-    symptoms,
-    medications,
-    weight,
-    sleep_hours,
-    notes
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const sql = `
+    INSERT INTO cycle_entries (
+      date,
+      cycle_day,
+      wrist_temp,
+      thermometer_temp,
+      lh_morning,
+      lh_night,
+      cm_amount,
+      cm_type,
+      bleeding,
+      intercourse,
+      pregnancy_test,
+      symptoms,
+      medications,
+      weight,
+      sleep_hours,
+      notes
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
-ON CONFLICT(date) DO UPDATE SET
-    cycle_number = excluded.cycle_number,
-    cycle_day = excluded.cycle_day,
-    wrist_temp = excluded.wrist_temp,
-    thermometer_temp = excluded.thermometer_temp,
-    lh_morning = excluded.lh_morning,
-    lh_night = excluded.lh_night,
-    cm_amount = excluded.cm_amount,
-    cm_type = excluded.cm_type,
-    bleeding = excluded.bleeding,
-    intercourse = excluded.intercourse,
-    pregnancy_test = excluded.pregnancy_test,
-    symptoms = excluded.symptoms,
-    medications = excluded.medications,
-    weight = excluded.weight,
-    sleep_hours = excluded.sleep_hours,
-    notes = excluded.notes;
-`;
+    ON CONFLICT(date) DO UPDATE SET
+      cycle_day         = COALESCE(excluded.cycle_day, cycle_day),
+      wrist_temp        = COALESCE(excluded.wrist_temp, wrist_temp),
+      thermometer_temp  = COALESCE(excluded.thermometer_temp, thermometer_temp),
+      lh_morning        = COALESCE(excluded.lh_morning, lh_morning),
+      lh_night          = COALESCE(excluded.lh_night, lh_night),
+      cm_amount         = COALESCE(excluded.cm_amount, cm_amount),
+      cm_type           = COALESCE(excluded.cm_type, cm_type),
+      bleeding          = COALESCE(excluded.bleeding, bleeding),
+      intercourse       = COALESCE(excluded.intercourse, intercourse),
+      pregnancy_test    = COALESCE(excluded.pregnancy_test, pregnancy_test),
+      symptoms          = COALESCE(excluded.symptoms, symptoms),
+      medications       = COALESCE(excluded.medications, medications),
+      weight            = COALESCE(excluded.weight, weight),
+      sleep_hours       = COALESCE(excluded.sleep_hours, sleep_hours),
+      notes             = COALESCE(excluded.notes, notes);
+  `;
+
   db.run(
     sql,
     [
       date,
-      cycleNumber,
       cycleDay,
       wristTemp,
       thermometerTemp,
@@ -129,6 +176,7 @@ ON CONFLICT(date) DO UPDATE SET
     function (err) {
       if (err) {
         console.error(err);
+
         return res.status(500).json({
           error: err.message,
         });
