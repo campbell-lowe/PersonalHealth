@@ -3,8 +3,8 @@
 import { useState } from "react";
 import PregnancyPrep from "./pages/PregnancyPrep";
 import CycleTracking from "./pages/CycleTracking";
+import AddCycleEntry from "./pages/AddCycleEntry";
 import Lifestyle from "./pages/Lifestyle";
-
 function App() {
   const [page, setPage] = useState("pregnancy");
 
@@ -25,11 +25,13 @@ function App() {
       </nav>
 
       {page === "pregnancy" && <PregnancyPrep />}
-      {page === "cycle" && <CycleTracking />}
+      {page === "cycle" && (
+        <CycleTracking setPage={setPage} />
+      )}
+      {page === "addEntry" && <AddCycleEntry />}
       {page === "lifestyle" && <Lifestyle />}
     </div>
   );
 }
 
 export default App;
-
