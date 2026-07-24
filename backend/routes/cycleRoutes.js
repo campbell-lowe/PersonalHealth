@@ -3,17 +3,249 @@ import db from "../database.js";
 
 const router = express.Router();
 
+function parseMultiSelectField(value) {
+  if (value === null || value === undefined || value === "") {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+
+      if (typeof parsed === "string" && parsed) {
+        return [parsed];
+      }
+    } catch {
+      return [value];
+    }
+  }
+
+  return [];
+}
+
+function toLhNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function getEntryLhPeak(entry) {
+  const morning = toLhNumber(entry.lhMorning);
+  const night = toLhNumber(entry.lhNight);
+
+  if (morning === null && night === null) {
+    return null;
+  }
+
+  return Math.max(morning ?? -Infinity, night ?? -Infinity);
+}
+
+function deriveOvulationTest(entry) {
+  const lhPeak = getEntryLhPeak(entry);
+  if (lhPeak === null) {
+    return "";
+  }
+
+  return lhPeak >= 1 ? "positive" : "negative";
+}
+
+function isCycleStart(entry) {
+  // Treat day 1 as a cycle boundary even if period flag was missed.
+  return Number(entry.cycleDay) === 1;
+}
+
+function mapRowToEntry(row) {
+  return {
+    id: row.id,
+    username: row.username,
+    date: row.date,
+    cycleDay: row.cycle_day,
+    wristTemp: row.wrist_temp,
+    thermometerTemp: row.thermometer_temp,
+    lhMorning: row.lh_morning,
+    lhNight: row.lh_night,
+    ovulationConfirmed:
+      row.ovulation_confirmed === null ? null : Boolean(row.ovulation_confirmed),
+    cmAmount: row.cm_amount,
+    cmType: row.cm_type,
+    period: row.period === null ? null : Boolean(row.period),
+    bleeding: row.bleeding,
+    sexDrive: row.sex_drive,
+    skinStatus: row.skin_status,
+    painSymptoms: parseMultiSelectField(row.pain_symptoms),
+    moodEmotions: parseMultiSelectField(row.mood_emotions),
+    intercourse: row.intercourse === null ? null : Boolean(row.intercourse),
+    usedProtection:
+      row.used_protection === null ? null : Boolean(row.used_protection),
+    protectionType: row.protection_type,
+    pregnancyTest: row.pregnancy_test,
+    symptoms: JSON.parse(row.symptoms || "[]"),
+    medications: JSON.parse(row.medications || "[]"),
+    weight: row.weight,
+    sleepHours: row.sleep_hours,
+    notes: row.notes,
+  };
+}
+
+function applyDerivedOvulationFields(entries) {
+  const groupedByUsername = new Map();
+
+  entries.forEach((entry) => {
+    const key = entry.username || "";
+    if (!groupedByUsername.has(key)) {
+      groupedByUsername.set(key, []);
+    }
+    groupedByUsername.get(key).push(entry);
+  });
+
+  const derivedById = new Map();
+
+  groupedByUsername.forEach((group) => {
+    const sorted = [...group].sort((a, b) => (a.date > b.date ? 1 : -1));
+
+    let cycle = [];
+    const flushCycle = () => {
+      if (cycle.length === 0) {
+        return;
+      }
+
+      const lhPeaks = cycle
+        .map((entry) => getEntryLhPeak(entry))
+        .filter((value) => value !== null);
+      const cyclePeak = lhPeaks.length > 0 ? Math.max(...lhPeaks) : null;
+
+      cycle.forEach((entry) => {
+        const entryPeak = getEntryLhPeak(entry);
+        const derived = {
+          ...entry,
+          ovulationTest: deriveOvulationTest(entry),
+          peak:
+            entryPeak !== null && cyclePeak !== null
+              ? entryPeak === cyclePeak
+              : false,
+        };
+
+        derivedById.set(entry.id, derived);
+      });
+
+      cycle = [];
+    };
+
+    sorted.forEach((entry) => {
+      if (cycle.length > 0 && isCycleStart(entry)) {
+        flushCycle();
+      }
+
+      cycle.push(entry);
+    });
+
+    flushCycle();
+  });
+
+  return entries.map((entry) => {
+    const derived = derivedById.get(entry.id);
+    if (derived) {
+      return derived;
+    }
+
+    return {
+      ...entry,
+      ovulationTest: deriveOvulationTest(entry),
+      peak: false,
+    };
+  });
+}
+
+function sendSavedEntryResponse(res, username, date, saveMeta = {}) {
+  db.all(
+    "SELECT * FROM cycle_entries WHERE username = ? ORDER BY date",
+    [username],
+    (lookupError, rows) => {
+      if (lookupError) {
+        console.error(lookupError);
+        return res.json({
+          success: true,
+          ...saveMeta,
+        });
+      }
+
+      const entries = applyDerivedOvulationFields(rows.map(mapRowToEntry));
+      const savedEntry = entries.find((item) => item.date === date) || null;
+
+      res.json({
+        success: true,
+        ...saveMeta,
+        entry: savedEntry,
+      });
+    }
+  );
+}
+
+function toPreviousDate(dateString) {
+  const current = new Date(`${dateString}T00:00:00`);
+  current.setDate(current.getDate() - 1);
+  const year = current.getFullYear();
+  const month = String(current.getMonth() + 1).padStart(2, "0");
+  const day = String(current.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isTrueLike(value) {
+  return value === true || value === 1 || value === "1" || value === "true" || value === "yes";
+}
+
+function resolveCycleDayForSave(db, username, date, period, requestedCycleDay, callback) {
+  if (!isTrueLike(period)) {
+    callback(requestedCycleDay);
+    return;
+  }
+
+  const previousDate = toPreviousDate(date);
+
+  db.get(
+    "SELECT period FROM cycle_entries WHERE username = ? AND date = ?",
+    [username, previousDate],
+    (err, previousEntry) => {
+      if (err) {
+        console.error(err);
+        callback(requestedCycleDay);
+        return;
+      }
+
+      const previousWasPeriod = previousEntry ? isTrueLike(previousEntry.period) : false;
+
+      callback(previousWasPeriod ? requestedCycleDay : 1);
+    }
+  );
+}
+
 //
 // GET ALL ENTRIES
 //
 router.get("/", (req, res) => {
-  const sql = `
-    SELECT *
-    FROM cycle_entries
-    ORDER BY date;
-  `;
+  const username = req.query.username;
+  const sql = username
+    ? `
+        SELECT *
+        FROM cycle_entries
+        WHERE username = ?
+        ORDER BY date;
+      `
+    : `
+        SELECT *
+        FROM cycle_entries
+        ORDER BY date;
+      `;
+  const params = username ? [username] : [];
 
-  db.all(sql, [], (err, rows) => {
+  db.all(sql, params, (err, rows) => {
     if (err) {
       console.error(err);
 
@@ -22,25 +254,7 @@ router.get("/", (req, res) => {
       });
     }
 
-    const entries = rows.map((row) => ({
-      id: row.id,
-      date: row.date,
-      cycleDay: row.cycle_day,
-      wristTemp: row.wrist_temp,
-      thermometerTemp: row.thermometer_temp,
-      lhMorning: row.lh_morning,
-      lhNight: row.lh_night,
-      cmAmount: row.cm_amount,
-      cmType: row.cm_type,
-      bleeding: row.bleeding,
-      intercourse: Boolean(row.intercourse),
-      pregnancyTest: row.pregnancy_test,
-      symptoms: JSON.parse(row.symptoms || "[]"),
-      medications: JSON.parse(row.medications || "[]"),
-      weight: row.weight,
-      sleepHours: row.sleep_hours,
-      notes: row.notes,
-    }));
+    const entries = applyDerivedOvulationFields(rows.map(mapRowToEntry));
 
     res.json(entries);
   });
@@ -50,10 +264,12 @@ router.get("/", (req, res) => {
 // GET ONE ENTRY BY DATE
 //
 router.get("/:date", (req, res) => {
-  db.get(
-    "SELECT * FROM cycle_entries WHERE date = ?",
-    [req.params.date],
-    (err, row) => {
+  const username = req.query.username || "campbell.lowe";
+
+  db.all(
+    "SELECT * FROM cycle_entries WHERE username = ? ORDER BY date",
+    [username],
+    (err, rows) => {
       if (err) {
         console.error(err);
 
@@ -62,31 +278,16 @@ router.get("/:date", (req, res) => {
         });
       }
 
-      if (!row) {
+      const entries = applyDerivedOvulationFields(rows.map(mapRowToEntry));
+      const entry = entries.find((item) => item.date === req.params.date);
+
+      if (!entry) {
         return res.status(404).json({
           message: "No entry found.",
         });
       }
 
-      res.json({
-        id: row.id,
-        date: row.date,
-        cycleDay: row.cycle_day,
-        wristTemp: row.wrist_temp,
-        thermometerTemp: row.thermometer_temp,
-        lhMorning: row.lh_morning,
-        lhNight: row.lh_night,
-        cmAmount: row.cm_amount,
-        cmType: row.cm_type,
-        bleeding: row.bleeding,
-        intercourse: Boolean(row.intercourse),
-        pregnancyTest: row.pregnancy_test,
-        symptoms: JSON.parse(row.symptoms || "[]"),
-        medications: JSON.parse(row.medications || "[]"),
-        weight: row.weight,
-        sleepHours: row.sleep_hours,
-        notes: row.notes,
-      });
+      res.json(entry);
     }
   );
 });
@@ -96,16 +297,25 @@ router.get("/:date", (req, res) => {
 //
 router.post("/", (req, res) => {
   const {
+    username,
     date,
     cycleDay,
     wristTemp,
     thermometerTemp,
     lhMorning,
     lhNight,
+    ovulationConfirmed,
     cmAmount,
     cmType,
+    period,
     bleeding,
+    sexDrive,
+    skinStatus,
+    painSymptoms,
+    moodEmotions,
     intercourse,
+    usedProtection,
+    protectionType,
     pregnancyTest,
     symptoms,
     medications,
@@ -114,80 +324,161 @@ router.post("/", (req, res) => {
     notes,
   } = req.body;
 
-  const sql = `
-    INSERT INTO cycle_entries (
-      date,
-      cycle_day,
-      wrist_temp,
-      thermometer_temp,
-      lh_morning,
-      lh_night,
-      cm_amount,
-      cm_type,
-      bleeding,
-      intercourse,
-      pregnancy_test,
-      symptoms,
-      medications,
-      weight,
-      sleep_hours,
-      notes
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-
-    ON CONFLICT(date) DO UPDATE SET
-      cycle_day         = COALESCE(excluded.cycle_day, cycle_day),
-      wrist_temp        = COALESCE(excluded.wrist_temp, wrist_temp),
-      thermometer_temp  = COALESCE(excluded.thermometer_temp, thermometer_temp),
-      lh_morning        = COALESCE(excluded.lh_morning, lh_morning),
-      lh_night          = COALESCE(excluded.lh_night, lh_night),
-      cm_amount         = COALESCE(excluded.cm_amount, cm_amount),
-      cm_type           = COALESCE(excluded.cm_type, cm_type),
-      bleeding          = COALESCE(excluded.bleeding, bleeding),
-      intercourse       = COALESCE(excluded.intercourse, intercourse),
-      pregnancy_test    = COALESCE(excluded.pregnancy_test, pregnancy_test),
-      symptoms          = COALESCE(excluded.symptoms, symptoms),
-      medications       = COALESCE(excluded.medications, medications),
-      weight            = COALESCE(excluded.weight, weight),
-      sleep_hours       = COALESCE(excluded.sleep_hours, sleep_hours),
-      notes             = COALESCE(excluded.notes, notes);
+  const updateSql = `
+    UPDATE cycle_entries
+    SET
+      cycle_day = COALESCE(?, cycle_day),
+      wrist_temp = COALESCE(?, wrist_temp),
+      thermometer_temp = COALESCE(?, thermometer_temp),
+      lh_morning = COALESCE(?, lh_morning),
+      lh_night = COALESCE(?, lh_night),
+      ovulation_confirmed = COALESCE(?, ovulation_confirmed),
+      cm_amount = COALESCE(?, cm_amount),
+      cm_type = COALESCE(?, cm_type),
+      period = COALESCE(?, period),
+      bleeding = COALESCE(?, bleeding),
+      sex_drive = COALESCE(?, sex_drive),
+      skin_status = COALESCE(?, skin_status),
+      pain_symptoms = COALESCE(?, pain_symptoms),
+      mood_emotions = COALESCE(?, mood_emotions),
+      intercourse = COALESCE(?, intercourse),
+      used_protection = COALESCE(?, used_protection),
+      protection_type = COALESCE(?, protection_type),
+      pregnancy_test = COALESCE(?, pregnancy_test),
+      symptoms = COALESCE(?, symptoms),
+      medications = COALESCE(?, medications),
+      weight = COALESCE(?, weight),
+      sleep_hours = COALESCE(?, sleep_hours),
+      notes = COALESCE(?, notes)
+    WHERE username = ? AND date = ?;
   `;
 
-  db.run(
-    sql,
-    [
-      date,
-      cycleDay,
+  const normalizedPainSymptoms = JSON.stringify(parseMultiSelectField(painSymptoms));
+  const normalizedMoodEmotions = JSON.stringify(parseMultiSelectField(moodEmotions));
+  const normalizedSymptoms = JSON.stringify(symptoms || []);
+  const normalizedMedications = JSON.stringify(medications || []);
+
+  const insertSql = `
+      INSERT INTO cycle_entries (
+        username,
+        date,
+        cycle_day,
+        wrist_temp,
+        thermometer_temp,
+        lh_morning,
+        lh_night,
+        ovulation_confirmed,
+        cm_amount,
+        cm_type,
+        period,
+        bleeding,
+        sex_drive,
+        skin_status,
+        pain_symptoms,
+        mood_emotions,
+        intercourse,
+        used_protection,
+        protection_type,
+        pregnancy_test,
+        symptoms,
+        medications,
+        weight,
+        sleep_hours,
+        notes
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    `;
+
+  resolveCycleDayForSave(db, username, date, period, cycleDay, (finalCycleDay) => {
+    const updateParams = [
+      finalCycleDay,
       wristTemp,
       thermometerTemp,
       lhMorning,
       lhNight,
+      ovulationConfirmed,
       cmAmount,
       cmType,
+      period,
       bleeding,
+      sexDrive,
+      skinStatus,
+      normalizedPainSymptoms,
+      normalizedMoodEmotions,
       intercourse,
+      usedProtection,
+      protectionType,
       pregnancyTest,
-      JSON.stringify(symptoms),
-      JSON.stringify(medications),
+      normalizedSymptoms,
+      normalizedMedications,
       weight,
       sleepHours,
       notes,
-    ],
-    function (err) {
-      if (err) {
-        console.error(err);
+      username,
+      date,
+    ];
+
+    db.run(updateSql, updateParams, function (updateError) {
+      if (updateError) {
+        console.error(updateError);
 
         return res.status(500).json({
-          error: err.message,
+          error: updateError.message,
         });
       }
 
-      res.json({
-        success: true,
-        id: this.lastID,
-      });
-    }
-  );
+      if (this.changes > 0) {
+        return sendSavedEntryResponse(res, username, date, {
+          updated: true,
+        });
+      }
+
+      db.run(
+        insertSql,
+        [
+          username,
+          date,
+          finalCycleDay,
+          wristTemp,
+          thermometerTemp,
+          lhMorning,
+          lhNight,
+          ovulationConfirmed,
+          cmAmount,
+          cmType,
+          period,
+          bleeding,
+          sexDrive,
+          skinStatus,
+          normalizedPainSymptoms,
+          normalizedMoodEmotions,
+          intercourse,
+          usedProtection,
+          protectionType,
+          pregnancyTest,
+          normalizedSymptoms,
+          normalizedMedications,
+          weight,
+          sleepHours,
+          notes,
+        ],
+        function (insertError) {
+          if (insertError) {
+            console.error(insertError);
+
+            return res.status(500).json({
+              error: insertError.message,
+            });
+          }
+
+          sendSavedEntryResponse(res, username, date, {
+            inserted: true,
+            id: this.lastID,
+          });
+        }
+      );
+    });
+  });
 });
 
 export default router;

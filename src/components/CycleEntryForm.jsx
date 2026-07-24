@@ -1,35 +1,124 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { emptyCycleEntry } from "../models/cycleEntryModel";
+import "./CycleEntryForm.css";
 
-function CycleEntryForm({ initialEntry }) {
+const painSymptomOptions = [
+  ["none", "None"],
+  ["cramps", "Cramps"],
+  ["headache", "Headache"],
+  ["back_pain", "Back Pain"],
+  ["breast_tenderness", "Breast Tenderness"],
+  ["bloating", "Bloating"],
+  ["fatigue", "Fatigue"],
+  ["nausea", "Nausea"],
+  ["other", "Other"],
+];
+
+const moodEmotionOptions = [
+  ["calm", "Calm"],
+  ["happy", "Happy"],
+  ["irritable", "Irritable"],
+  ["anxious", "Anxious"],
+  ["sad", "Sad"],
+  ["mood_swings", "Mood Swings"],
+  ["emotional", "Emotional"],
+  ["other", "Other"],
+];
+
+function booleanToSelectValue(value) {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "";
+}
+
+function selectToBoolean(value) {
+  if (value === "yes") return true;
+  if (value === "no") return false;
+  return null;
+}
+
+function toArray(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!value) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // Value is not JSON, so treat it as a scalar option.
+    }
+  }
+
+  return [value];
+}
+
+function hasValue(value) {
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (value === null || value === undefined) {
+    return false;
+  }
+
+  if (typeof value === "string") {
+    return value.trim() !== "";
+  }
+
+  return true;
+}
+
+function getInputStateClass(value) {
+  return hasValue(value) ? "is-filled" : "is-empty";
+}
+
+function CycleEntryForm({ initialEntry }, ref) {
   const [entry, setEntry] = useState(emptyCycleEntry);
+  const [saveState, setSaveState] = useState("idle");
+  const [saveMessage, setSaveMessage] = useState("");
   const [sleepDuration, setSleepDuration] = useState({
     hours: "",
     minutes: "",
   });
 
-  const rowStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    marginBottom: "10px",
-    textAlign: "left",
-  };
+  function toggleMultiValue(fieldName, optionValue, isChecked) {
+    setEntry((previousEntry) => {
+      const existingValues = toArray(previousEntry[fieldName]);
+      const nextValues = isChecked
+        ? Array.from(new Set([...existingValues, optionValue]))
+        : existingValues.filter((value) => value !== optionValue);
 
-  const labelStyle = {
-    minWidth: "220px",
-  };
-
-  const inputStyle = {
-    flex: 1,
-    minWidth: 0,
-  };
+      return {
+        ...previousEntry,
+        [fieldName]: nextValues,
+      };
+    });
+  }
 
   useEffect(() => {
     if (initialEntry) {
-      setEntry(initialEntry);
+      const hydratedEntry = {
+        ...emptyCycleEntry,
+        ...initialEntry,
+        ovulationConfirmed:
+          initialEntry.ovulationConfirmed ?? emptyCycleEntry.ovulationConfirmed,
+        painSymptoms: toArray(initialEntry.painSymptoms),
+        moodEmotions: toArray(initialEntry.moodEmotions),
+        symptoms: toArray(initialEntry.symptoms),
+        medications: toArray(initialEntry.medications),
+      };
 
-      const decimal = Number(initialEntry.sleepHours);
+      setEntry(hydratedEntry);
+
+      const decimal = Number(hydratedEntry.sleepHours);
       if (Number.isFinite(decimal) && decimal >= 0) {
         const totalMinutes = Math.round(decimal * 60);
         const hours = Math.floor(totalMinutes / 60);
@@ -46,10 +135,59 @@ function CycleEntryForm({ initialEntry }) {
       setEntry(emptyCycleEntry);
       setSleepDuration({ hours: "", minutes: "" });
     }
+
+    setSaveState("idle");
+    setSaveMessage("");
   }, [initialEntry]);
 
   function handleChange(event) {
     const { name, value, type, checked } = event.target;
+
+    if (name === "intercourse") {
+      const intercourseValue = selectToBoolean(value);
+
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        intercourse: intercourseValue,
+        usedProtection:
+          intercourseValue === true ? previousEntry.usedProtection : null,
+        protectionType: intercourseValue === true ? previousEntry.protectionType : "",
+      }));
+      return;
+    }
+
+    if (name === "usedProtection") {
+      const usedProtectionValue = selectToBoolean(value);
+
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        usedProtection: usedProtectionValue,
+        protectionType:
+          usedProtectionValue === true ? previousEntry.protectionType : "",
+      }));
+      return;
+    }
+
+    if (name === "ovulationConfirmed") {
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        ovulationConfirmed: selectToBoolean(value),
+      }));
+      return;
+    }
+
+    if (name === "period") {
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        period: selectToBoolean(value),
+      }));
+      return;
+    }
+
+    if (name === "painSymptoms" || name === "moodEmotions") {
+      toggleMultiValue(name, value, checked);
+      return;
+    }
 
     setEntry((previousEntry) => ({
       ...previousEntry,
@@ -86,8 +224,9 @@ function CycleEntryForm({ initialEntry }) {
     }));
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function saveEntry() {
+    setSaveState("saving");
+    setSaveMessage("Saving entry...");
 
     const hasHours = sleepDuration.hours !== "";
     const hasMinutes = sleepDuration.minutes !== "";
@@ -126,215 +265,501 @@ function CycleEntryForm({ initialEntry }) {
         throw new Error(backendMessage);
       }
 
-      alert("Entry saved!");
+      const responseData = await response.json();
 
-      setEntry(emptyCycleEntry);
-      setSleepDuration({ hours: "", minutes: "" });
+      if (responseData?.entry) {
+        const hydratedEntry = {
+          ...emptyCycleEntry,
+          ...responseData.entry,
+          ovulationConfirmed:
+            responseData.entry.ovulationConfirmed ?? emptyCycleEntry.ovulationConfirmed,
+          period: responseData.entry.period ?? emptyCycleEntry.period,
+          peak: responseData.entry.peak ?? emptyCycleEntry.peak,
+          painSymptoms: toArray(responseData.entry.painSymptoms),
+          moodEmotions: toArray(responseData.entry.moodEmotions),
+          symptoms: toArray(responseData.entry.symptoms),
+          medications: toArray(responseData.entry.medications),
+        };
+
+        setEntry(hydratedEntry);
+
+        const decimal = Number(hydratedEntry.sleepHours);
+        if (Number.isFinite(decimal) && decimal >= 0) {
+          const totalMinutes = Math.round(decimal * 60);
+          const hours = Math.floor(totalMinutes / 60);
+          const minutes = totalMinutes % 60;
+          setSleepDuration({
+            hours: String(hours),
+            minutes: String(minutes),
+          });
+        } else {
+          setSleepDuration({ hours: "", minutes: "" });
+        }
+      } else {
+        setEntry((previousEntry) => ({
+          ...previousEntry,
+          sleepHours: sleepHoursDecimal,
+        }));
+      }
+
+      setSaveState("saved");
+      setSaveMessage("Saved. Derived values are refreshed.");
+      return { ok: true };
     } catch (error) {
       console.error(error);
-      alert(`Something went wrong while saving: ${error.message}`);
+      setSaveState("error");
+      setSaveMessage(`Could not save entry: ${error.message}`);
+      return { ok: false, message: error.message };
     }
   }
 
+  async function handleSubmit(event) {
+    event.preventDefault();
+    await saveEntry();
+  }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      saveEntry,
+    })
+  );
+
+  let saveStateClass = "survey-status";
+  if (saveState === "saved") {
+    saveStateClass = "survey-status survey-status-success";
+  } else if (saveState === "error") {
+    saveStateClass = "survey-status survey-status-error";
+  } else if (saveState === "saving") {
+    saveStateClass = "survey-status survey-status-saving";
+  }
+
+  const sleepFieldState = getInputStateClass(
+    (sleepDuration.hours || "") + (sleepDuration.minutes || "")
+  );
+
   return (
-    <form
-      onSubmit={handleSubmit}
-      style={{
-        maxWidth: "820px",
-        margin: "0 auto",
-      }}
-    >
-      <h2>Daily Cycle Entry</h2>
+    <form onSubmit={handleSubmit} className="cycle-entry-form" noValidate>
+      <div className="survey-header">
+        <h2>Daily Cycle Entry</h2>
+        <p>Quickly log today and save. Automatic fields update right after save.</p>
+      </div>
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>Date</span>
-        <input
-          type="date"
-          name="date"
-          value={entry.date || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
+      {saveMessage && <p className={saveStateClass}>{saveMessage}</p>}
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>Cycle Day</span>
-        <input
-          type="number"
-          name="cycleDay"
-          value={entry.cycleDay ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
+      <section className="survey-section">
+        <h3>Basics</h3>
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>Wrist Temperature</span>
-        <input
-          type="number"
-          step="0.01"
-          name="wristTemp"
-          value={entry.wristTemp ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
+        <label className="survey-row">
+          <span className="survey-label">Username</span>
+          <select
+            name="username"
+            value={entry.username || "campbell.lowe"}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.username || "campbell.lowe")}`}
+          >
+            <option value="campbell.lowe">campbell.lowe</option>
+          </select>
+        </label>
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>Thermometer Temperature</span>
-        <input
-          type="number"
-          step="0.01"
-          name="thermometerTemp"
-          value={entry.thermometerTemp ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
+        <label className="survey-row">
+          <span className="survey-label">Date</span>
+          <input
+            type="date"
+            name="date"
+            value={entry.date || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.date)}`}
+            required
+          />
+        </label>
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>LH Morning</span>
-        <input
-          type="number"
-          step="0.01"
-          name="lhMorning"
-          value={entry.lhMorning ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>LH Night</span>
-        <input
-          type="number"
-          step="0.01"
-          name="lhNight"
-          value={entry.lhNight ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>CM Amount</span>
-        <select
-          name="cmAmount"
-          value={entry.cmAmount || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select amount</option>
-          <option value="none">None</option>
-          <option value="light">Light</option>
-          <option value="moderate">Moderate</option>
-          <option value="heavy">Heavy</option>
-        </select>
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>CM Type</span>
-        <select
-          name="cmType"
-          value={entry.cmType || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select type</option>
-          <option value="dry">Dry</option>
-          <option value="sticky">Sticky</option>
-          <option value="creamy">Creamy</option>
-          <option value="watery">Watery</option>
-          <option value="eggwhite">Egg White</option>
-        </select>
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>Bleeding / Spotting</span>
-        <select
-          name="bleeding"
-          value={entry.bleeding || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select flow</option>
-          <option value="none">None</option>
-          <option value="spotting">Spotting</option>
-          <option value="light">Light</option>
-          <option value="medium">Medium</option>
-          <option value="heavy">Heavy</option>
-        </select>
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>Pregnancy Test</span>
-        <select
-          name="pregnancyTest"
-          value={entry.pregnancyTest || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        >
-          <option value="">Select result</option>
-          <option value="not_taken">Not Taken</option>
-          <option value="negative">Negative</option>
-          <option value="faint_positive">Faint Positive</option>
-          <option value="positive">Positive</option>
-          <option value="invalid">Invalid</option>
-        </select>
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>Weight</span>
-        <input
-          type="number"
-          step="0.1"
-          name="weight"
-          value={entry.weight ?? ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
-
-      <label style={rowStyle}>
-        <span style={labelStyle}>Sleep Hours (Hours/Minutes)</span>
-        <div style={{ ...inputStyle, display: "flex", gap: "8px" }}>
+        <label className="survey-row">
+          <span className="survey-label">Cycle Day</span>
           <input
             type="number"
-            min="0"
-            name="hours"
-            value={sleepDuration.hours}
-            onChange={handleSleepChange}
-            placeholder="Hours"
-            style={{ flex: 1, minWidth: 0 }}
+            name="cycleDay"
+            value={entry.cycleDay ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.cycleDay)}`}
+            min="1"
           />
+        </label>
+      </section>
+
+      <section className="survey-section">
+        <h3>Fertility Markers</h3>
+
+        <label className="survey-row">
+          <span className="survey-label">Wrist Temperature</span>
           <input
             type="number"
-            min="0"
-            max="59"
-            name="minutes"
-            value={sleepDuration.minutes}
-            onChange={handleSleepChange}
-            placeholder="Minutes"
-            style={{ flex: 1, minWidth: 0 }}
+            step="0.01"
+            name="wristTemp"
+            value={entry.wristTemp ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.wristTemp)}`}
           />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Thermometer Temperature</span>
+          <input
+            type="number"
+            step="0.01"
+            name="thermometerTemp"
+            value={entry.thermometerTemp ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.thermometerTemp)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">LH Morning</span>
+          <input
+            type="number"
+            step="0.01"
+            name="lhMorning"
+            value={entry.lhMorning ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.lhMorning)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">LH Night</span>
+          <input
+            type="number"
+            step="0.01"
+            name="lhNight"
+            value={entry.lhNight ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.lhNight)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Ovulation Test</span>
+          <input
+            type="text"
+            value={entry.ovulationTest || ""}
+            readOnly
+            className={`survey-input survey-input-readonly ${getInputStateClass(entry.ovulationTest)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Peak (T/F)</span>
+          <input
+            type="text"
+            value={entry.peak ? "True" : "False"}
+            readOnly
+            className={`survey-input survey-input-readonly ${getInputStateClass(entry.peak)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Ovulation Confirmed (T/F)</span>
+          <select
+            name="ovulationConfirmed"
+            value={booleanToSelectValue(entry.ovulationConfirmed)}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.ovulationConfirmed)}`}
+          >
+            <option value="">Select value</option>
+            <option value="yes">True</option>
+            <option value="no">False</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">CM Amount</span>
+          <select
+            name="cmAmount"
+            value={entry.cmAmount || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.cmAmount)}`}
+          >
+            <option value="">Select amount</option>
+            <option value="none">None</option>
+            <option value="light">Light</option>
+            <option value="moderate">Moderate</option>
+            <option value="heavy">Heavy</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">CM Type</span>
+          <select
+            name="cmType"
+            value={entry.cmType || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.cmType)}`}
+          >
+            <option value="">Select type</option>
+            <option value="dry">Dry</option>
+            <option value="sticky">Sticky</option>
+            <option value="creamy">Creamy</option>
+            <option value="watery">Watery</option>
+            <option value="eggwhite">Egg White</option>
+          </select>
+        </label>
+      </section>
+
+      <section className="survey-section">
+        <h3>Flow, Body, and Mood</h3>
+
+        <label className="survey-row">
+          <span className="survey-label">Period (T/F)</span>
+          <select
+            name="period"
+            value={booleanToSelectValue(entry.period)}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.period)}`}
+          >
+            <option value="yes">True</option>
+            <option value="no">False</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Bleeding / Spotting</span>
+          <select
+            name="bleeding"
+            value={entry.bleeding || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.bleeding)}`}
+          >
+            <option value="">Select flow</option>
+            <option value="none">None</option>
+            <option value="spotting">Spotting</option>
+            <option value="light">Light</option>
+            <option value="medium">Medium</option>
+            <option value="heavy">Heavy</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Sex Drive</span>
+          <select
+            name="sexDrive"
+            value={entry.sexDrive || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.sexDrive)}`}
+          >
+            <option value="">Select level</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Skin</span>
+          <select
+            name="skinStatus"
+            value={entry.skinStatus || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.skinStatus)}`}
+          >
+            <option value="">Select skin symptom</option>
+            <option value="none">None</option>
+            <option value="oily">Oily</option>
+            <option value="acne">Acne/Breakouts</option>
+            <option value="dry">Dry Skin</option>
+            <option value="sensitive">Sensitive Skin</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+
+        <div className="survey-row survey-row-top">
+          <span className="survey-label">Pain and Symptoms</span>
+          <div className={`survey-input multi-select-card ${getInputStateClass(toArray(entry.painSymptoms))}`}>
+            <strong>Select all that apply</strong>
+            <div className="checkbox-grid">
+              {painSymptomOptions.map(([value, label]) => (
+                <label key={value} className="checkbox-option">
+                  <input
+                    type="checkbox"
+                    name="painSymptoms"
+                    value={value}
+                    checked={toArray(entry.painSymptoms).includes(value)}
+                    onChange={handleChange}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
-      </label>
 
-      <label style={rowStyle}>
-        <span style={labelStyle}>Notes</span>
-        <textarea
-          name="notes"
-          value={entry.notes || ""}
-          onChange={handleChange}
-          style={inputStyle}
-        />
-      </label>
+        <div className="survey-row survey-row-top">
+          <span className="survey-label">Mood and Emotions</span>
+          <div className={`survey-input multi-select-card ${getInputStateClass(toArray(entry.moodEmotions))}`}>
+            <strong>Select all that apply</strong>
+            <div className="checkbox-grid">
+              {moodEmotionOptions.map(([value, label]) => (
+                <label key={value} className="checkbox-option">
+                  <input
+                    type="checkbox"
+                    name="moodEmotions"
+                    value={value}
+                    checked={toArray(entry.moodEmotions).includes(value)}
+                    onChange={handleChange}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <button type="submit">
-        Save Entry
-      </button>
+      <section className="survey-section">
+        <h3>Intercourse and Protection</h3>
+
+        <label className="survey-row">
+          <span className="survey-label">Had Sex</span>
+          <select
+            name="intercourse"
+            value={booleanToSelectValue(entry.intercourse)}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.intercourse)}`}
+          >
+            <option value="">Select answer</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+
+        {entry.intercourse === true && (
+          <>
+            <label className="survey-row">
+              <span className="survey-label">If yes, Used Protection?</span>
+              <select
+                name="usedProtection"
+                value={booleanToSelectValue(entry.usedProtection)}
+                onChange={handleChange}
+                className={`survey-input ${getInputStateClass(entry.usedProtection)}`}
+              >
+                <option value="">Select answer</option>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+
+            {entry.usedProtection === true && (
+              <label className="survey-row">
+                <span className="survey-label">Protection Type</span>
+                <select
+                  name="protectionType"
+                  value={entry.protectionType || ""}
+                  onChange={handleChange}
+                  className={`survey-input ${getInputStateClass(entry.protectionType)}`}
+                >
+                  <option value="">Select type</option>
+                  <option value="condom">Condom</option>
+                  <option value="pill">Birth Control Pill</option>
+                  <option value="iud">IUD</option>
+                  <option value="implant">Implant</option>
+                  <option value="patch">Patch</option>
+                  <option value="ring">Vaginal Ring</option>
+                  <option value="shot">Birth Control Shot</option>
+                  <option value="diaphragm">Diaphragm</option>
+                  <option value="spermicide">Spermicide</option>
+                  <option value="emergency_contraception">Emergency Contraception</option>
+                  <option value="vasectomy">Partner Vasectomy</option>
+                  <option value="tubal_ligation">Tubal Ligation</option>
+                  <option value="pull_out">Pull Out (hmm, maybe protection but probably not)</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+            )}
+          </>
+        )}
+      </section>
+
+      <section className="survey-section">
+        <h3>Wellness</h3>
+
+        <label className="survey-row">
+          <span className="survey-label">Pregnancy Test</span>
+          <select
+            name="pregnancyTest"
+            value={entry.pregnancyTest || ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.pregnancyTest)}`}
+          >
+            <option value="">Select result</option>
+            <option value="not_taken">Not Taken</option>
+            <option value="negative">Negative</option>
+            <option value="faint_positive">Faint Positive</option>
+            <option value="positive">Positive</option>
+            <option value="invalid">Invalid</option>
+          </select>
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">Weight</span>
+          <input
+            type="number"
+            step="0.1"
+            name="weight"
+            value={entry.weight ?? ""}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.weight)}`}
+          />
+        </label>
+
+        <label className="survey-row survey-row-top">
+          <span className="survey-label">Sleep Hours</span>
+          <div className={`survey-input sleep-grid ${sleepFieldState}`}>
+            <input
+              type="number"
+              min="0"
+              name="hours"
+              value={sleepDuration.hours}
+              onChange={handleSleepChange}
+              placeholder="Hours"
+            />
+            <input
+              type="number"
+              min="0"
+              max="59"
+              name="minutes"
+              value={sleepDuration.minutes}
+              onChange={handleSleepChange}
+              placeholder="Minutes"
+            />
+          </div>
+        </label>
+      </section>
+
+      <section className="survey-section">
+        <h3>Notes</h3>
+
+        <label className="survey-row survey-row-top">
+          <span className="survey-label">Daily Notes</span>
+          <textarea
+            name="notes"
+            value={entry.notes || ""}
+            onChange={handleChange}
+            className={`survey-input survey-notes ${getInputStateClass(entry.notes)}`}
+            placeholder="Anything important for today?"
+          />
+        </label>
+      </section>
+
+      <div className="survey-actions">
+        <button type="submit" disabled={saveState === "saving"}>
+          {saveState === "saving" ? "Saving..." : "Save Entry"}
+        </button>
+      </div>
     </form>
   );
 }
 
-export default CycleEntryForm;
+const ForwardedCycleEntryForm = forwardRef(CycleEntryForm);
+ForwardedCycleEntryForm.displayName = "CycleEntryForm";
+
+export default ForwardedCycleEntryForm;

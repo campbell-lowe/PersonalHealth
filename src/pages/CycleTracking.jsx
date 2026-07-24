@@ -1,5 +1,6 @@
 import { useState } from "react";
 import AddCycleEntry from "./AddCycleEntry";
+import CycleDashboard from "./CycleDashboard";
 
 function CycleTracking() {
   const [page, setPage] = useState("home");
@@ -23,8 +24,7 @@ function CycleTracking() {
           ← Back
         </button>
 
-        <h1>Cycle Dashboard</h1>
-        <p>Coming soon!</p>
+        <CycleDashboard />
       </div>
     );
   }
