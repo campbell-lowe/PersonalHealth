@@ -1,6 +1,12 @@
 import sqlite3 from "sqlite3";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const db = new sqlite3.Database("cycleTracker.db");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dbPath = path.join(__dirname, "cycleTracker.db");
+
+const db = new sqlite3.Database(dbPath);
 
 const sql = `
 INSERT INTO cycle_entries (
