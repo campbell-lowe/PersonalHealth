@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AddCycleEntry from "./AddCycleEntry";
 import CycleDashboard from "./CycleDashboard";
+import CycleStatistics from "./CycleStatistics";
 
 function CycleTracking() {
   const [page, setPage] = useState("home");
@@ -29,6 +30,18 @@ function CycleTracking() {
     );
   }
 
+  if (page === "statistics") {
+    return (
+      <div>
+        <button onClick={() => setPage("home")}>
+          ← Back
+        </button>
+
+        <CycleStatistics />
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1>Cycle Tracking</h1>
@@ -39,6 +52,10 @@ function CycleTracking() {
 
       <button onClick={() => setPage("dashboard")}>
         📊 View Dashboard
+      </button>
+
+      <button onClick={() => setPage("statistics")}>
+        📈 View Statistics
       </button>
     </div>
   );

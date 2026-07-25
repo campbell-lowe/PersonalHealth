@@ -1,1052 +1,2671 @@
 import { useEffect, useMemo, useState } from "react";
 
-const DASHBOARD_USERNAMES = ["campbell.lowe"];
-const DATE_RANGE_OPTIONS = [
-  { value: "all", label: "All Time" },
-  { value: "30", label: "Last 30 Days" },
-  { value: "60", label: "Last 60 Days" },
-  { value: "90", label: "Last 90 Days" },
-  { value: "custom", label: "Custom Range" },
+const CURRENT_USERNAME = "campbell.lowe";
+const OVULATION_SIGNAL_DELTA = 0.2;
+const LH_POSITIVE_THRESHOLD = 1;
+
+const TEMPERATURE_SOURCES = [
+  { key: "thermometer", label: "Thermometer", dataKey: "thermometerTemp", color: "#ff5d57" },
+  { key: "apple-watch", label: "Apple Watch", dataKey: "wristTemp", color: "#2470ff" },
+  // Add future sources here (e.g., Oura Ring, Tempdrop) without chart rewrites.
 ];
 
-const chartCardStyle = {
-  border: "1px solid #d7e0ea",
-  borderRadius: "16px",
-  padding: "16px",
-  background: "linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)",
-  boxShadow: "0 12px 30px rgba(15, 23, 42, 0.06)",
-};
-
-const emptyChartTextStyle = {
-  marginBottom: 0,
-  color: "#6b7280",
-};
-
-const chartMetaTextStyle = {
-  marginTop: 0,
-  marginBottom: "12px",
-  color: "#64748b",
-  fontSize: "0.9rem",
-};
-
-const statRowStyle = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
-  gap: "8px",
-  marginBottom: "12px",
-};
-
-const statCardStyle = {
-  border: "1px solid #e2e8f0",
-  borderRadius: "12px",
-  padding: "10px 12px",
-  background: "#ffffff",
-};
-
-function parseEntryDate(dateString) {
-  return new Date(`${dateString}T00:00:00`);
-}
-
-function isInDateRange(dateString, rangePreset, startDate, endDate) {
-  const entryDate = parseEntryDate(dateString);
-
-  if (rangePreset === "custom") {
-    if (startDate) {
-      const start = parseEntryDate(startDate);
-      if (entryDate < start) return false;
-    }
-
-    if (endDate) {
-      const end = parseEntryDate(endDate);
-      if (entryDate > end) return false;
-    }
-
-    return true;
-  }
-
-  if (rangePreset === "all") {
-    return true;
-  }
-
-  const days = Number(rangePreset);
-  if (!Number.isFinite(days) || days <= 0) {
-    return true;
-  }
-
-  const cutoff = new Date();
-  cutoff.setHours(0, 0, 0, 0);
-  cutoff.setDate(cutoff.getDate() - (days - 1));
-
-  return entryDate >= cutoff;
-}
-
-function toStartOfDay(date) {
-  const normalized = new Date(date);
-  normalized.setHours(0, 0, 0, 0);
-  return normalized;
-}
-
-function getDaysSince(dateString) {
-  if (!dateString) return null;
-
-  const today = toStartOfDay(new Date());
-  const target = toStartOfDay(parseEntryDate(dateString));
-  const diffMs = today - target;
-
-  if (diffMs < 0) return 0;
-
-  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
-}
-
 function toNumber(value) {
-  if (value === null || value === undefined) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function toPlottableNumber(value, options = {}) {
+  const numeric = toNumber(value);
+  if (numeric === null) {
     return null;
   }
 
-  if (typeof value === "string" && value.trim() === "") {
+  if (options.excludeZero && numeric === 0) {
     return null;
   }
 
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return numeric;
 }
 
-function formatShortDate(dateString) {
-  const date = parseEntryDate(dateString);
-
-  if (Number.isNaN(date.getTime())) {
-    return dateString;
-  }
-
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+function average(values) {
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function formatChartLabel(label) {
-  return label.includes("-") ? formatShortDate(label) : label;
+function findSustainedRiseStart(points, startIndex = 6, minDelta = 0.2) {
+  const firstIndex = Math.max(6, startIndex);
+
+  for (let index = firstIndex; index <= points.length - 3; index += 1) {
+    const previousSixValues = points.slice(index - 6, index).map((point) => point.value);
+    const baselineCandidate = average(previousSixValues);
+    if (baselineCandidate === null) {
+      continue;
+    }
+
+    const hasSustainedRise = [0, 1, 2].every(
+      (offset) => points[index + offset].value >= baselineCandidate + minDelta
+    );
+
+    if (hasSustainedRise) {
+      return {
+        index,
+        baseline: baselineCandidate,
+      };
+    }
+  }
+
+  return null;
 }
 
-function humanizeOptionLabel(value) {
-  return value
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function createValueTicks(minValue, maxValue, tickCount = 4) {
-  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
-    return [];
+function computeBaselineForTemperature(points) {
+  if (points.length === 0) {
+    return { baseline: null, isEstimated: true };
   }
 
-  if (minValue === maxValue) {
-    return [minValue];
+  const ovulationIndex = points.findIndex((point) => point.ovulationConfirmed === true);
+  const riseStart = findSustainedRiseStart(points, ovulationIndex >= 0 ? ovulationIndex : 6, 0.2);
+
+  if (riseStart) {
+    return {
+      baseline: Number(riseStart.baseline.toFixed(2)),
+      isEstimated: false,
+    };
   }
 
-  const ticks = [];
-  const step = (maxValue - minValue) / tickCount;
+  const candidatePool =
+    ovulationIndex > 0
+      ? points.slice(0, ovulationIndex)
+      : points.slice(0, Math.max(points.length - 2, 1));
 
-  for (let index = 0; index <= tickCount; index += 1) {
-    ticks.push(minValue + step * index);
-  }
+  const lows = candidatePool
+    .map((point) => point.value)
+    .sort((a, b) => a - b)
+    .slice(0, Math.min(6, candidatePool.length));
 
-  return ticks;
-}
-
-function formatTickValue(value) {
-  if (!Number.isFinite(value)) {
-    return "";
-  }
-
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function getSeriesSummary(data) {
-  if (data.length === 0) {
-    return null;
-  }
-
-  const latest = data.at(-1);
-  const values = data.map((point) => point.y);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const previous = data.length > 1 ? data.at(-2) : null;
-  const change = previous ? latest.y - previous.y : null;
+  const estimatedBaseline = average(lows);
 
   return {
-    latest,
-    min,
-    max,
-    change,
+    baseline: estimatedBaseline === null ? null : Number(estimatedBaseline.toFixed(2)),
+    isEstimated: true,
   };
 }
 
-function summarizeLoggedCycles(entries) {
-  const cycles = [];
-  let currentCycle = null;
-
-  entries.forEach((entry) => {
-    const cycleDay = toNumber(entry.cycleDay);
-    if (cycleDay === null) {
-      return;
-    }
-
-    const startsNewCycle = currentCycle === null || cycleDay === 1;
-
-    if (startsNewCycle) {
-      if (currentCycle) {
-        cycles.push(currentCycle);
-      }
-
-      currentCycle = {
-        startDate: entry.date,
-        endDate: entry.date,
-        loggedDays: 1,
-        maxCycleDay: cycleDay,
-      };
-
-      return;
-    }
-
-    currentCycle.endDate = entry.date;
-    currentCycle.loggedDays += 1;
-    currentCycle.maxCycleDay = Math.max(currentCycle.maxCycleDay, cycleDay);
-  });
-
-  if (currentCycle) {
-    cycles.push(currentCycle);
-  }
-
-  return cycles.reverse();
+function normalizeCmType(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
-function buildCycleWindows(entries) {
-  const sorted = [...entries].sort((a, b) => (a.date > b.date ? 1 : -1));
-  const starts = sorted.filter((entry) => toNumber(entry.cycleDay) === 1);
+function getCombinedTemperature(entry) {
+  if (entry?.sick === true) {
+    return null;
+  }
 
-  if (starts.length === 0) {
+  const wrist = toPlottableNumber(entry?.wristTemp, { excludeZero: true });
+  const thermometer = toPlottableNumber(entry?.thermometerTemp, { excludeZero: true });
+  const values = [wrist, thermometer].filter((value) => value !== null);
+
+  return values.length > 0 ? average(values) : null;
+}
+
+function getDailyLhMax(entry) {
+  const values = [entry?.lhMorning, entry?.lhAfternoon, entry?.lhNight]
+    .map((value) => toPlottableNumber(value, { excludeZero: true }))
+    .filter((value) => value !== null);
+
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function getOvulationConfidence(score) {
+  if (score >= 10) return "High";
+  if (score >= 7) return "Medium";
+  return "Low";
+}
+
+function addScoreReason(day, code, label, points) {
+  if (!day.reasonMap[code]) {
+    day.reasonMap[code] = {
+      code,
+      label,
+      points: 0,
+    };
+  }
+
+  day.reasonMap[code].points += points;
+  day.score += points;
+}
+
+function estimateOvulationForCycle(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return {
+      estimatedOvulationDate: null,
+      estimatedOvulationCycleDay: null,
+      estimatedOvulationScore: 0,
+      estimatedOvulationConfidence: "Low",
+      estimatedOvulationReasons: [],
+      estimatedOvulationTopCandidates: [],
+      estimatedBaseline: null,
+      estimatedBaselineIsEstimated: true,
+      estimatedCycleLhPeak: null,
+    };
+  }
+
+  const days = entries.map((entry, index) => {
+    const combinedTemperature = getCombinedTemperature(entry);
+    const lhMax = getDailyLhMax(entry);
+    const cmType = normalizeCmType(entry?.cmType);
+
+    return {
+      index,
+      date: entry?.date || null,
+      cycleDay: entry?.cycleDay ?? null,
+      combinedTemperature,
+      lhMax,
+      cmType,
+      score: 0,
+      reasonMap: {},
+    };
+  });
+
+  const tempPoints = days
+    .filter((day) => day.combinedTemperature !== null)
+    .map((day) => ({
+      index: day.index,
+      value: day.combinedTemperature,
+      ovulationConfirmed: entries[day.index]?.ovulationConfirmed === true,
+    }));
+
+  const baselineResult = computeBaselineForTemperature(tempPoints);
+  const riseStart =
+    baselineResult.baseline === null
+      ? null
+      : findSustainedRiseStart(tempPoints, 6, OVULATION_SIGNAL_DELTA);
+
+  const riseStartEntryIndex = riseStart ? tempPoints[riseStart.index]?.index : null;
+
+  if (baselineResult.baseline !== null) {
+    days.forEach((day) => {
+      const nextThreeIndices = [day.index + 1, day.index + 2, day.index + 3];
+      const hasThreeConsecutiveAbove = nextThreeIndices.every((entryIndex) => {
+        const nextDay = days[entryIndex];
+        return nextDay && nextDay.combinedTemperature !== null && nextDay.combinedTemperature > baselineResult.baseline;
+      });
+
+      if (hasThreeConsecutiveAbove) {
+        addScoreReason(
+          day,
+          "temp-rise-3",
+          "3 consecutive temperatures above baseline after this day",
+          6
+        );
+      }
+
+      if (riseStartEntryIndex !== null && day.index === riseStartEntryIndex - 1) {
+        addScoreReason(
+          day,
+          "pre-rise",
+          "Immediately before sustained temperature rise",
+          4
+        );
+      }
+    });
+  }
+
+  const lhValues = days.map((day) => day.lhMax).filter((value) => value !== null);
+  const cycleLhMax = lhValues.length > 0 ? Math.max(...lhValues) : null;
+  const firstPositiveLhDayIndex = days.findIndex(
+    (day) => day.lhMax !== null && day.lhMax >= LH_POSITIVE_THRESHOLD
+  );
+
+  const peakLhDayIndex =
+    cycleLhMax === null
+      ? -1
+      : days.findIndex((day) => day.lhMax !== null && day.lhMax === cycleLhMax);
+
+  if (firstPositiveLhDayIndex >= 0 || peakLhDayIndex >= 0) {
+    days.forEach((day) => {
+      if (firstPositiveLhDayIndex >= 0) {
+        const deltaFromFirstPositive = day.index - firstPositiveLhDayIndex;
+
+        if (deltaFromFirstPositive === 1) {
+          addScoreReason(
+            day,
+            "lh-after-first-positive-24-36",
+            "24-36h after first positive LH",
+            7
+          );
+        } else if (deltaFromFirstPositive === 2) {
+          addScoreReason(
+            day,
+            "lh-after-first-positive-36-48",
+            "Around 36-48h after first positive LH",
+            4
+          );
+        } else if (deltaFromFirstPositive === 0) {
+          addScoreReason(
+            day,
+            "lh-first-positive-day",
+            "First positive LH day",
+            2
+          );
+        }
+      }
+
+      if (peakLhDayIndex >= 0) {
+        const deltaFromPeak = day.index - peakLhDayIndex;
+
+        if (deltaFromPeak === 1) {
+          addScoreReason(
+            day,
+            "lh-after-peak-10-24",
+            "10-24h after LH peak",
+            9
+          );
+        } else if (deltaFromPeak === 0) {
+          addScoreReason(
+            day,
+            "lh-peak-day-window",
+            "LH peak day (ovulation often follows soon)",
+            6
+          );
+        } else if (deltaFromPeak === 2) {
+          addScoreReason(
+            day,
+            "lh-after-peak-24-48",
+            "About 24-48h after LH peak",
+            3
+          );
+        }
+      }
+
+      const currentIsPositive = day.lhMax !== null && day.lhMax >= LH_POSITIVE_THRESHOLD;
+      const nextDay = days[day.index + 1] || null;
+      const previousDay = days[day.index - 1] || null;
+      const nextIsPositive =
+        nextDay !== null && nextDay.lhMax !== null && nextDay.lhMax >= LH_POSITIVE_THRESHOLD;
+      const previousIsPositive =
+        previousDay !== null &&
+        previousDay.lhMax !== null &&
+        previousDay.lhMax >= LH_POSITIVE_THRESHOLD;
+
+      if (currentIsPositive && nextIsPositive) {
+        addScoreReason(
+          day,
+          "lh-sustained-start",
+          "Start of sustained positive LH surge (about 24h)",
+          4
+        );
+      }
+
+      if (currentIsPositive && previousIsPositive) {
+        addScoreReason(
+          day,
+          "lh-sustained-continuation",
+          "Continuation of sustained positive LH surge",
+          3
+        );
+      }
+    });
+  }
+
+  if (firstPositiveLhDayIndex >= 0) {
+    days.forEach((day) => {
+      if (day.index < firstPositiveLhDayIndex) {
+        addScoreReason(
+          day,
+          "before-lh-penalty",
+          "Before first positive LH (penalty)",
+          -5
+        );
+      }
+    });
+  }
+
+  days.forEach((day) => {
+    if (day.cmType.includes("egg white") || day.cmType.includes("eggwhite") || day.cmType.includes("ewcm")) {
+      addScoreReason(day, "cm-eggwhite", "Egg white cervical mucus present", 0.5);
+    } else if (day.cmType.includes("watery")) {
+      addScoreReason(day, "cm-watery", "Watery cervical mucus present", 0.25);
+    }
+  });
+
+  const winningDay = days.reduce((best, current) => {
+    if (!best) {
+      return current;
+    }
+
+    if (current.score > best.score) {
+      return current;
+    }
+
+    if (current.score === best.score && current.index < best.index) {
+      return current;
+    }
+
+    return best;
+  }, null);
+
+  const estimatedScore = winningDay?.score ?? 0;
+
+  const estimatedOvulationReasons = winningDay
+    ? Object.values(winningDay.reasonMap)
+        .filter((reason) => reason.points > 0)
+        .sort((a, b) => b.points - a.points)
+    : [];
+
+  const estimatedOvulationTopCandidates = days
+    .map((day) => ({
+      date: day.date,
+      cycleDay: day.cycleDay,
+      score: day.score,
+      confidence: getOvulationConfidence(day.score),
+      reasons: Object.values(day.reasonMap)
+        .filter((reason) => reason.points > 0)
+        .sort((a, b) => b.points - a.points),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+
+      const dayA = Number(a.cycleDay);
+      const dayB = Number(b.cycleDay);
+
+      if (Number.isFinite(dayA) && Number.isFinite(dayB)) {
+        return dayA - dayB;
+      }
+
+      return 0;
+    })
+    .slice(0, 5);
+
+  return {
+    estimatedOvulationDate: winningDay?.date || null,
+    estimatedOvulationCycleDay: winningDay?.cycleDay ?? null,
+    estimatedOvulationScore: estimatedScore,
+    estimatedOvulationConfidence: getOvulationConfidence(estimatedScore),
+    estimatedOvulationReasons,
+    estimatedOvulationTopCandidates,
+    estimatedBaseline: baselineResult.baseline,
+    estimatedBaselineIsEstimated: baselineResult.isEstimated,
+    estimatedCycleLhPeak: cycleLhMax,
+  };
+}
+
+function formatPointLabel({
+  seriesLabel,
+  value,
+  date,
+  cycleDay,
+}) {
+  const dateLabel = date || "Unknown date";
+  const dayLabel = cycleDay ? `CD ${cycleDay}` : "CD -";
+  const valueLabel = Number.isFinite(value) ? value.toFixed(2) : String(value);
+  return `${seriesLabel}: ${valueLabel} | ${dateLabel} (${dayLabel})`;
+}
+
+function buildCycleDayTicks(entries, maxLabels = 12) {
+  if (!Array.isArray(entries) || entries.length === 0) {
     return [];
   }
 
+  const indices = [];
+
+  if (entries.length <= maxLabels) {
+    for (let index = 0; index < entries.length; index += 1) {
+      indices.push(index);
+    }
+  } else {
+    const lastIndex = entries.length - 1;
+    const step = Math.ceil(lastIndex / Math.max(maxLabels - 1, 1));
+    const unique = new Set([0, lastIndex]);
+
+    for (let index = 0; index <= lastIndex; index += step) {
+      unique.add(index);
+    }
+
+    indices.push(...Array.from(unique).sort((a, b) => a - b));
+  }
+
+  return indices.map((index) => {
+    const cycleDayValue = Number(entries[index]?.cycleDay);
+    const label = Number.isFinite(cycleDayValue) && cycleDayValue > 0 ? String(cycleDayValue) : "-";
+    return { index, label };
+  });
+}
+
+function buildCycleWindows(entries) {
+  const starts = entries
+    .filter((entry) => Number(entry.cycleDay) === 1 && entry.date)
+    .sort((a, b) => (a.date > b.date ? 1 : -1));
+
   return starts.map((startEntry, index) => {
-    const nextStart = starts[index + 1];
-    const endDateExclusive = nextStart?.date || null;
+    const nextStart = starts[index + 1]?.date || null;
 
-    const windowEntries = sorted.filter((entry) => {
-      if (entry.date < startEntry.date) {
-        return false;
-      }
-
-      if (!endDateExclusive) {
-        return true;
-      }
-
-      return entry.date < endDateExclusive;
+    const entriesInWindow = entries.filter((entry) => {
+      if (!entry.date) return false;
+      if (entry.date < startEntry.date) return false;
+      if (nextStart && entry.date >= nextStart) return false;
+      return true;
     });
+
+    const endDate = entriesInWindow.at(-1)?.date || startEntry.date;
 
     return {
       startDate: startEntry.date,
-      endDateExclusive,
-      entries: windowEntries,
+      endDate,
+      entries: entriesInWindow,
+      length: entriesInWindow.length,
     };
   });
 }
 
-function StatCard({ label, value }) {
-  return (
-    <div style={statCardStyle}>
-      <div style={{ fontSize: "0.78rem", color: "#64748b", marginBottom: "2px" }}>{label}</div>
-      <div style={{ fontSize: "1rem", fontWeight: 600, color: "#0f172a" }}>{value}</div>
-    </div>
+function SimpleLineChart({
+  title,
+  entries,
+  series,
+  excludeZero = false,
+  confirmedDateSet = null,
+  confirmedLabel = "",
+  estimatedDateSet = null,
+  estimatedLabel = "",
+  aboveBaselineDateSet = null,
+  aboveBaselineLabel = "",
+  shadedDateSet = null,
+  shadedLabel = "",
+  secondaryShadedDateSet = null,
+  secondaryShadedLabel = "",
+  showCycleDayTicks = false,
+  referenceLineValue = null,
+  referenceLineLabel = "",
+}) {
+  const width = 760;
+  const height = 240;
+  const margin = 28;
+
+  const pointsBySeries = series.map((definition) => ({
+    ...definition,
+    points: entries
+      .map((entry, index) => ({
+        index,
+        value: toPlottableNumber(entry[definition.key], { excludeZero }),
+        date: entry.date,
+        cycleDay: entry.cycleDay,
+        isConfirmed: Boolean(entry.date && confirmedDateSet?.has(entry.date)),
+        isEstimated: Boolean(entry.date && estimatedDateSet?.has(entry.date)),
+        isAboveBaseline: Boolean(entry.date && aboveBaselineDateSet?.has(entry.date)),
+      }))
+      .filter((point) => point.value !== null),
+  }));
+
+  const confirmedIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter((item) => item.date && confirmedDateSet?.has(item.date))
+      .map((item) => item.index)
   );
-}
 
-function RecentValuesTable({ data, valueFormatter }) {
-  const recentItems = [...data].slice(-5).reverse();
-
-  return (
-    <div style={{ marginTop: "10px" }}>
-      <div style={{ fontSize: "0.82rem", fontWeight: 600, color: "#475569", marginBottom: "6px" }}>
-        Most Recent Values
-      </div>
-      <div style={{ display: "grid", gap: "6px" }}>
-        {recentItems.map((point) => (
-          <div
-            key={`${point.label}-${point.y}`}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: "10px",
-              fontSize: "0.88rem",
-              padding: "7px 10px",
-              borderRadius: "10px",
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
-            }}
-          >
-            <span style={{ color: "#475569" }}>{formatChartLabel(point.label)}</span>
-            <strong style={{ color: "#0f172a" }}>{valueFormatter(point.y)}</strong>
-          </div>
-        ))}
-      </div>
-    </div>
+  const estimatedIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter((item) => item.date && estimatedDateSet?.has(item.date))
+      .map((item) => item.index)
   );
-}
 
-function buildAreaPath(points, width, height, minY, maxY) {
-  if (points.length === 0) return "";
+  const shadedIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter((item) => item.date && shadedDateSet?.has(item.date))
+      .map((item) => item.index)
+  );
 
-  const innerWidth = width - 60;
-  const innerHeight = height - 50;
-  const xStart = 40;
-  const yStart = 20;
-  const baseline = yStart + innerHeight;
-  const yRange = maxY - minY || 1;
+  const secondaryShadedIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter((item) => item.date && secondaryShadedDateSet?.has(item.date))
+      .map((item) => item.index)
+  );
 
-  const lineSegments = points.map((point, index) => {
-    const x = xStart + (innerWidth * index) / Math.max(points.length - 1, 1);
-    const normalizedY = (point.y - minY) / yRange;
-    const y = yStart + innerHeight - normalizedY * innerHeight;
-    return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
-  });
+  const allValues = pointsBySeries.flatMap((item) => item.points.map((point) => point.value));
+  const hasData = allValues.length > 0;
 
-  const lastX = xStart + (innerWidth * (points.length - 1)) / Math.max(points.length - 1, 1);
+  let minY = hasData ? Math.min(...allValues) : 0;
+  let maxY = hasData ? Math.max(...allValues) : 1;
 
-  return `${lineSegments.join(" ")} L${lastX.toFixed(2)} ${baseline.toFixed(2)} L${xStart.toFixed(2)} ${baseline.toFixed(2)} Z`;
-}
-
-function normalizeMultiValueField(value) {
-  if (Array.isArray(value)) return value;
-  if (!value) return [];
-
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-      if (typeof parsed === "string") return [parsed];
-    } catch {
-      return [value];
-    }
+  if (minY === maxY) {
+    minY -= 0.5;
+    maxY += 0.5;
   }
 
-  return [];
-}
+  const xForIndex = (index) => {
+    const denominator = Math.max(entries.length - 1, 1);
+    return margin + (index / denominator) * (width - margin * 2);
+  };
 
-function buildLinePath(points, width, height, minY, maxY) {
-  if (points.length === 0) return "";
+  const yForValue = (value) => {
+    return margin + ((maxY - value) / (maxY - minY)) * (height - margin * 2);
+  };
 
-  const innerWidth = width - 60;
-  const innerHeight = height - 50;
-  const xStart = 40;
-  const yStart = 20;
+  const xBandWidth = entries.length <= 1
+    ? 16
+    : Math.max(
+        14,
+        Math.min(32, (width - margin * 2) / Math.max(entries.length - 1, 1) * 0.55)
+      );
 
-  const yRange = maxY - minY || 1;
-
-  return points
-    .map((point, index) => {
-      const x = xStart + (innerWidth * index) / Math.max(points.length - 1, 1);
-      const normalizedY = (point.y - minY) / yRange;
-      const y = yStart + innerHeight - normalizedY * innerHeight;
-      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-}
-
-function LineChart({ title, color, data, description, valueFormatter = formatTickValue }) {
-  if (data.length === 0) {
-    return (
-      <div style={chartCardStyle}>
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        <p style={emptyChartTextStyle}>Not enough data yet.</p>
-      </div>
-    );
-  }
-
-  const width = 720;
-  const height = 230;
-
-  const yValues = data.map((point) => point.y);
-  const minY = Math.min(...yValues);
-  const maxY = Math.max(...yValues);
-  const pathData = buildLinePath(data, width, height, minY, maxY);
-  const areaPathData = buildAreaPath(data, width, height, minY, maxY);
-  const yTicks = createValueTicks(minY, maxY, 4);
-  const summary = getSeriesSummary(data);
-  const xTickIndexes = data.length <= 6
-    ? data.map((_, index) => index)
-    : Array.from(new Set([0, Math.floor((data.length - 1) * 0.25), Math.floor((data.length - 1) * 0.5), Math.floor((data.length - 1) * 0.75), data.length - 1]));
+  const cycleDayTicks = showCycleDayTicks ? buildCycleDayTicks(entries) : [];
 
   return (
-    <div style={chartCardStyle}>
-      <h3 style={{ marginTop: 0 }}>{title}</h3>
-      <p style={chartMetaTextStyle}>
-        {description || `Rightmost point is the newest day. ${data.length} point${data.length === 1 ? "" : "s"} shown.`}
-      </p>
-      {summary ? (
-        <div style={statRowStyle}>
-          <StatCard label="Latest" value={`${valueFormatter(summary.latest.y)} on ${formatChartLabel(summary.latest.label)}`} />
-          <StatCard label="Lowest" value={valueFormatter(summary.min)} />
-          <StatCard label="Highest" value={valueFormatter(summary.max)} />
-          <StatCard
-            label="Change From Previous"
-            value={summary.change === null ? "n/a" : `${summary.change > 0 ? "+" : ""}${valueFormatter(summary.change)}`}
-          />
+    <section
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "10px",
+        padding: "20px",
+      }}
+    >
+      <h2 style={{ marginTop: 0 }}>{title}</h2>
+
+      {!hasData ? (
+        <div
+          style={{
+            height: "220px",
+            borderRadius: "8px",
+            background: "#f6f6f6",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            color: "#666",
+          }}
+        >
+          No numeric data in this cycle yet.
         </div>
-      ) : null}
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "220px" }} role="img" aria-label={title}>
-        <defs>
-          <linearGradient id={`area-${title.replaceAll(" ", "-")}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.24" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
+      ) : (
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`${title} chart`}
+          style={{
+            width: "100%",
+            maxWidth: `${width}px`,
+            background: "#fff",
+            borderRadius: "8px",
+            border: "1px solid #eee",
+          }}
+        >
+          <line
+            x1={margin}
+            y1={height - margin}
+            x2={width - margin}
+            y2={height - margin}
+            stroke="#d8d8d8"
+            strokeWidth="1"
+          />
 
-        {yTicks.map((tick) => {
-          const yRange = maxY - minY || 1;
-          const y = 20 + 180 - ((tick - minY) / yRange) * 180;
+          <line
+            x1={margin}
+            y1={margin}
+            x2={margin}
+            y2={height - margin}
+            stroke="#d8d8d8"
+            strokeWidth="1"
+          />
 
-          return (
-            <g key={`y-${tick}`}>
-              <line x1="40" y1={y} x2="680" y2={y} stroke="#e7edf4" strokeDasharray="4 6" />
-              <text x="34" y={y + 4} fontSize="11" textAnchor="end" fill="#64748b">
-                {formatTickValue(tick)}
+          {Array.from(secondaryShadedIndexSet)
+            .filter((index) => !shadedIndexSet.has(index))
+            .map((index) => (
+              <rect
+                key={`shade-secondary-${index}`}
+                x={xForIndex(index) - xBandWidth / 2}
+                y={margin}
+                width={xBandWidth}
+                height={height - margin * 2}
+                fill="#f57c00"
+                opacity="0.16"
+                rx="4"
+              />
+            ))}
+
+          {Array.from(shadedIndexSet).map((index) => (
+            <rect
+              key={`shade-${index}`}
+              x={xForIndex(index) - xBandWidth / 2}
+              y={margin}
+              width={xBandWidth}
+              height={height - margin * 2}
+              fill="#b71c1c"
+              opacity="0.14"
+              rx="4"
+            />
+          ))}
+
+          {referenceLineValue !== null &&
+          Number.isFinite(referenceLineValue) &&
+          referenceLineValue >= minY &&
+          referenceLineValue <= maxY ? (
+            <g>
+              <line
+                x1={margin}
+                y1={yForValue(referenceLineValue)}
+                x2={width - margin}
+                y2={yForValue(referenceLineValue)}
+                stroke="#1f1f1f"
+                strokeWidth="1.5"
+                strokeDasharray="5 4"
+                opacity="0.8"
+              />
+              {referenceLineLabel ? (
+                <text
+                  x={width - margin}
+                  y={yForValue(referenceLineValue) - 4}
+                  fill="#333"
+                  fontSize="10"
+                  textAnchor="end"
+                >
+                  {referenceLineLabel}
+                </text>
+              ) : null}
+            </g>
+          ) : null}
+
+          {Array.from(estimatedIndexSet).map((index) => (
+            <g key={`estimated-ov-${index}`}>
+              <line
+                x1={xForIndex(index)}
+                y1={margin}
+                x2={xForIndex(index)}
+                y2={height - margin}
+                stroke="#ef6c00"
+                strokeWidth="2"
+                strokeDasharray="5 4"
+                opacity="0.9"
+              />
+            </g>
+          ))}
+
+          {Array.from(confirmedIndexSet).map((index) => (
+            <g key={`confirmed-ov-${index}`}>
+              <line
+                x1={xForIndex(index)}
+                y1={margin}
+                x2={xForIndex(index)}
+                y2={height - margin}
+                stroke="#c62828"
+                strokeWidth="2.4"
+                opacity="0.95"
+              />
+            </g>
+          ))}
+
+          {pointsBySeries.map((item) => {
+            if (item.points.length === 0) {
+              return null;
+            }
+
+            const polylinePoints = item.points
+              .map((point) => `${xForIndex(point.index)},${yForValue(point.value)}`)
+              .join(" ");
+
+            return (
+              <g key={item.key}>
+                <polyline
+                  fill="none"
+                  stroke={item.color}
+                  strokeWidth="2.5"
+                  points={polylinePoints}
+                />
+
+                {item.points.map((point) => (
+                  <circle
+                    key={`${item.key}-${point.index}`}
+                    cx={xForIndex(point.index)}
+                    cy={yForValue(point.value)}
+                    r={point.isConfirmed ? "5.25" : point.isAboveBaseline ? "4" : "3"}
+                    fill={item.color}
+                    stroke={point.isConfirmed ? "#b71c1c" : "none"}
+                    strokeWidth={point.isConfirmed ? "2" : "0"}
+                  >
+                    <title>
+                      {formatPointLabel({
+                        seriesLabel: item.label,
+                        value: point.value,
+                        date: point.date,
+                        cycleDay: point.cycleDay,
+                      })}
+                    </title>
+                  </circle>
+                ))}
+
+                {item.points
+                  .filter((point) => point.isAboveBaseline)
+                  .map((point) => (
+                    <path
+                      key={`${item.key}-rise-${point.index}`}
+                      d={`M ${xForIndex(point.index)} ${Math.max(margin + 8, yForValue(point.value) - 12)} L ${xForIndex(point.index) - 4} ${Math.max(margin + 14, yForValue(point.value) - 6)} L ${xForIndex(point.index) + 4} ${Math.max(margin + 14, yForValue(point.value) - 6)} Z`}
+                      fill="#1b5e20"
+                      opacity="0.95"
+                    />
+                  ))}
+
+                {item.points
+                  .filter((point) => point.isConfirmed)
+                  .map((point) => (
+                    <text
+                      key={`${item.key}-ov-${point.index}`}
+                      x={xForIndex(point.index)}
+                      y={Math.max(margin + 10, yForValue(point.value) - 9)}
+                      textAnchor="middle"
+                      fill="#8e0000"
+                      fontSize="9"
+                      fontWeight="700"
+                    >
+                      OV
+                    </text>
+                  ))}
+              </g>
+            );
+          })}
+
+          {cycleDayTicks.map((tick) => (
+            <g key={`cd-${tick.index}`}>
+              <line
+                x1={xForIndex(tick.index)}
+                y1={height - margin}
+                x2={xForIndex(tick.index)}
+                y2={height - margin + 4}
+                stroke="#8c8c8c"
+                strokeWidth="1"
+              />
+              <text
+                x={xForIndex(tick.index)}
+                y={height - 6}
+                fill="#666"
+                fontSize="10"
+                textAnchor="middle"
+              >
+                {tick.label}
               </text>
             </g>
-          );
-        })}
+          ))}
 
-        <line x1="40" y1="20" x2="40" y2="200" stroke="#cbd5e1" />
-        <line x1="40" y1="200" x2="680" y2="200" stroke="#cbd5e1" />
-
-        <path d={areaPathData} fill={`url(#area-${title.replaceAll(" ", "-")})`} />
-
-        <path d={pathData} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-
-        {data.map((point, index) => {
-          const x = 40 + (640 * index) / Math.max(data.length - 1, 1);
-          const yRange = maxY - minY || 1;
-          const y = 20 + 180 - ((point.y - minY) / yRange) * 180;
-          const isLatest = index === data.length - 1;
-
-          return (
-            <g key={`${point.label}-${index}`}>
-              <circle cx={x} cy={y} r="4" fill={color} stroke="#ffffff" strokeWidth="2" />
-              {isLatest ? (
-                <text x={x - 8} y={Math.max(16, y - 10)} fontSize="11" textAnchor="end" fill="#0f172a">
-                  {valueFormatter(point.y)}
-                </text>
-              ) : null}
-              {xTickIndexes.includes(index) ? (
-                <text x={x} y="218" fontSize="11" textAnchor="middle" fill="#64748b">
-                  {formatChartLabel(point.label)}
-                </text>
-              ) : null}
-            </g>
-          );
-        })}
-      </svg>
-      <RecentValuesTable data={data} valueFormatter={valueFormatter} />
-    </div>
-  );
-}
-
-function HorizontalBarChart({ title, counts }) {
-  const entries = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6);
-
-  if (entries.length === 0) {
-    return (
-      <div style={chartCardStyle}>
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        <p style={emptyChartTextStyle}>No selections logged yet.</p>
-      </div>
-    );
-  }
-
-  const maxValue = Math.max(...entries.map(([, value]) => value));
-
-  return (
-    <div style={chartCardStyle}>
-      <h3 style={{ marginTop: 0 }}>{title}</h3>
-      <p style={chartMetaTextStyle}>Top {entries.length} logged selections in the active date range.</p>
-      <div style={{ display: "grid", gap: "10px" }}>
-        {entries.map(([label, value]) => {
-          const widthPercent = (value / maxValue) * 100;
-
-          return (
-            <div key={label}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", marginBottom: "4px" }}>
-                <span>{humanizeOptionLabel(label)}</span>
-                <span>{value}</span>
-              </div>
-              <div style={{ background: "#e5e7eb", height: "10px", borderRadius: "999px", overflow: "hidden" }}>
-                <div style={{ width: `${widthPercent}%`, height: "10px", background: "linear-gradient(90deg, #2563eb 0%, #38bdf8 100%)", borderRadius: "999px" }} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function LongCycleDayChart({ title, data }) {
-  if (data.length === 0) {
-    return (
-      <div style={chartCardStyle}>
-        <h3 style={{ marginTop: 0 }}>{title}</h3>
-        <p style={emptyChartTextStyle}>Not enough cycle-day temperature data yet.</p>
-      </div>
-    );
-  }
-
-  const sorted = [...data].sort((a, b) => {
-    if (a.cycleDay !== b.cycleDay) {
-      return a.cycleDay - b.cycleDay;
-    }
-
-    return a.date > b.date ? 1 : -1;
-  });
-
-  const minDay = Math.min(...sorted.map((point) => point.cycleDay));
-  const maxDay = Math.max(...sorted.map((point) => point.cycleDay));
-  const minTemp = Math.min(...sorted.map((point) => point.temp));
-  const maxTemp = Math.max(...sorted.map((point) => point.temp));
-
-  const width = Math.max(980, (maxDay + 1) * 42);
-  const height = 280;
-  const left = 56;
-  const right = 20;
-  const top = 20;
-  const bottom = 46;
-  const innerWidth = width - left - right;
-  const innerHeight = height - top - bottom;
-  const dayRange = maxDay - minDay || 1;
-  const yMin = minTemp - 0.05;
-  const yMax = maxTemp + 0.05;
-  const yRange = yMax - yMin || 1;
-
-  const xForDay = (day) => left + ((day - minDay) / dayRange) * innerWidth;
-  const yForTemp = (temp) => top + innerHeight - ((temp - yMin) / yRange) * innerHeight;
-
-  const pathData = sorted
-    .map((point, index) => `${index === 0 ? "M" : "L"}${xForDay(point.cycleDay).toFixed(2)} ${yForTemp(point.temp).toFixed(2)}`)
-    .join(" ");
-
-  let tickStep = 1;
-  if (dayRange > 24) {
-    tickStep = 3;
-  } else if (dayRange > 12) {
-    tickStep = 2;
-  }
-  const dayTicks = [];
-  for (let day = minDay; day <= maxDay; day += tickStep) {
-    dayTicks.push(day);
-  }
-  if (dayTicks.at(-1) !== maxDay) {
-    dayTicks.push(maxDay);
-  }
-
-  const yTicks = createValueTicks(yMin, yMax, 4);
-  const latestPoint = sorted.at(-1);
-
-  return (
-    <div style={chartCardStyle}>
-      <h3 style={{ marginTop: 0, marginBottom: "8px" }}>{title}</h3>
-      <p style={chartMetaTextStyle}>
-        Long view by cycle day. Green ring markers show days where ovulation was marked true.
-      </p>
-      <div style={statRowStyle}>
-        <StatCard label="Latest Day Shown" value={`Day ${latestPoint.cycleDay}`} />
-        <StatCard label="Latest Temperature" value={formatTickValue(latestPoint.temp)} />
-        <StatCard label="Lowest Temperature" value={formatTickValue(minTemp)} />
-        <StatCard label="Highest Temperature" value={formatTickValue(maxTemp)} />
-      </div>
-
-      <div style={{ overflowX: "auto", paddingBottom: "4px" }}>
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: `${width}px`, height: "260px" }} role="img" aria-label={title}>
-          {yTicks.map((tick) => {
-            const y = yForTemp(tick);
-
-            return (
-              <g key={`temp-${tick}`}>
-                <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e7edf4" strokeDasharray="4 6" />
-                <text x={left - 8} y={y + 4} fontSize="11" textAnchor="end" fill="#64748b">
-                  {formatTickValue(tick)}
-                </text>
-              </g>
-            );
-          })}
-
-          <line x1={left} y1={top} x2={left} y2={height - bottom} stroke="#cbd5e1" />
-          <line x1={left} y1={height - bottom} x2={width - right} y2={height - bottom} stroke="#cbd5e1" />
-
-          {dayTicks.map((day) => {
-            const x = xForDay(day);
-            return (
-              <g key={`tick-${day}`}>
-                <line x1={x} y1={top} x2={x} y2={height - bottom} stroke="#eef2f7" />
-                <text x={x} y={height - 8} fontSize="10" textAnchor="middle" fill="#64748b">
-                  {day}
-                </text>
-              </g>
-            );
-          })}
-
-          <path d={pathData} fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-
-          {sorted.map((point, index) => {
-            const x = xForDay(point.cycleDay);
-            const y = yForTemp(point.temp);
-            const isLatest = index === sorted.length - 1;
-
-            return (
-              <g key={`${point.date}-${point.cycleDay}-${index}`}>
-                <circle cx={x} cy={y} r="4" fill="#ef4444" stroke="#ffffff" strokeWidth="2" />
-                {point.ovulationConfirmed ? <circle cx={x} cy={y} r="6.5" fill="none" stroke="#059669" strokeWidth="2" /> : null}
-                {isLatest ? (
-                  <text x={x - 8} y={Math.max(16, y - 10)} fontSize="11" textAnchor="end" fill="#0f172a">
-                    {formatTickValue(point.temp)}
-                  </text>
-                ) : null}
-              </g>
-            );
-          })}
         </svg>
-      </div>
-      <RecentValuesTable
-        data={sorted.map((point) => ({ label: `${point.date} (Day ${point.cycleDay})`, y: point.temp }))}
-        valueFormatter={formatTickValue}
-      />
-    </div>
-  );
-}
+      )}
 
-function CycleSummaryCards({ cycles }) {
-  if (cycles.length === 0) {
-    return (
-      <div style={chartCardStyle}>
-        <h3 style={{ marginTop: 0 }}>Logged Cycles</h3>
-        <p style={emptyChartTextStyle}>Not enough cycle-day data yet.</p>
-      </div>
-    );
-  }
+      {hasData ? (
+        <div style={{ marginTop: "8px", color: "#666", fontSize: "0.85rem" }}>
+          Min: {minY.toFixed(2)} | Max: {maxY.toFixed(2)}
+        </div>
+      ) : null}
 
-  return (
-    <div style={chartCardStyle}>
-      <h3 style={{ marginTop: 0 }}>Logged Cycles</h3>
-      <p style={chartMetaTextStyle}>
-        Each box shows the date range covered by a logged cycle and how many entries are in it.
-      </p>
-      <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-        {cycles.map((cycle, index) => (
-          <div
-            key={`${cycle.startDate}-${cycle.endDate}-${index}`}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "10px",
+          marginTop: "12px",
+        }}
+      >
+        {series.map((item) => (
+          <span
+            key={item.key}
             style={{
-              border: "1px solid #d7e0ea",
-              borderRadius: "14px",
-              padding: "14px",
-              background: "#ffffff",
-              boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
             }}
           >
-            <div style={{ fontSize: "0.8rem", color: "#64748b", marginBottom: "4px" }}>
-              Cycle {cycles.length - index}
-            </div>
-            <div style={{ fontSize: "1rem", fontWeight: 600, color: "#0f172a", marginBottom: "8px" }}>
-              {formatChartLabel(cycle.startDate)} to {formatChartLabel(cycle.endDate)}
-            </div>
-            <div style={{ display: "grid", gap: "6px", color: "#475569", fontSize: "0.9rem" }}>
-              <span>Logged Days: {cycle.loggedDays}</span>
-              <span>Highest Cycle Day: {cycle.maxCycleDay}</span>
-            </div>
-          </div>
+            <span
+              aria-hidden="true"
+              style={{
+                width: "10px",
+                height: "10px",
+                borderRadius: "999px",
+                background: item.color,
+              }}
+            />
+            {item.label}
+          </span>
         ))}
+
+        {confirmedLabel ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+              color: "#6d1111",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: "16px",
+                borderTop: "2px solid #c62828",
+              }}
+            />
+            {confirmedLabel}
+          </span>
+        ) : null}
+
+        {estimatedLabel ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+              color: "#a34a00",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: "16px",
+                borderTop: "2px dashed #ef6c00",
+              }}
+            />
+            {estimatedLabel}
+          </span>
+        ) : null}
+
+        {aboveBaselineLabel ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+              color: "#1b5e20",
+            }}
+          >
+            <span aria-hidden="true" style={{ width: "10px", height: "10px", display: "inline-flex" }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" role="presentation">
+                <path d="M5 1 L1 8 L9 8 Z" fill="#1b5e20" />
+              </svg>
+            </span>
+            {aboveBaselineLabel}
+          </span>
+        ) : null}
+
+        {shadedLabel ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+              color: "#7a1a1a",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: "12px",
+                height: "12px",
+                background: "rgba(183, 28, 28, 0.14)",
+                border: "1px solid rgba(183, 28, 28, 0.35)",
+                borderRadius: "2px",
+              }}
+            />
+            {shadedLabel}
+          </span>
+        ) : null}
+
+        {secondaryShadedLabel ? (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+              color: "#8f4d00",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: "12px",
+                height: "12px",
+                background: "rgba(245, 124, 0, 0.16)",
+                border: "1px solid rgba(143, 77, 0, 0.35)",
+                borderRadius: "2px",
+              }}
+            />
+            {secondaryShadedLabel}
+          </span>
+        ) : null}
       </div>
-    </div>
+    </section>
   );
 }
 
-function buildCycleDayTemperaturePoints(entries, temperatureField) {
-  return entries
-    .map((entry) => {
-      const cycleDayValue = toNumber(entry.cycleDay);
-      const temperatureValue = toNumber(entry[temperatureField]);
+function TemperatureSection({ entries, estimatedOvulationDate = null }) {
+  const [selectedSourceKey, setSelectedSourceKey] = useState(TEMPERATURE_SOURCES[0].key);
+  const [showTemperatureExport, setShowTemperatureExport] = useState(false);
 
-      if (cycleDayValue === null || temperatureValue === null) return null;
+  const selectedSource =
+    TEMPERATURE_SOURCES.find((source) => source.key === selectedSourceKey) ||
+    TEMPERATURE_SOURCES[0];
+
+  const nonSickEntries = useMemo(
+    () => entries.filter((entry) => entry.sick !== true),
+    [entries]
+  );
+
+  const baselinePoints = useMemo(
+    () =>
+      nonSickEntries
+        .map((entry, index) => ({
+          index,
+          date: entry.date,
+          cycleDay: entry.cycleDay,
+          ovulationConfirmed: entry.ovulationConfirmed,
+          value: toPlottableNumber(entry[selectedSource.dataKey], { excludeZero: true }),
+        }))
+        .filter((point) => point.value !== null),
+    [nonSickEntries, selectedSource.dataKey]
+  );
+
+  const baselineResult = useMemo(
+    () => computeBaselineForTemperature(baselinePoints),
+    [baselinePoints]
+  );
+
+  const confirmedOvulationDateSet = useMemo(
+    () =>
+      new Set(
+        entries
+          .filter((entry) => entry.ovulationConfirmed === true && entry.date)
+          .map((entry) => entry.date)
+      ),
+    [entries]
+  );
+
+  const estimatedOvulationDateSet = useMemo(
+    () => new Set(estimatedOvulationDate ? [estimatedOvulationDate] : []),
+    [estimatedOvulationDate]
+  );
+
+  const aboveBaselineDateSet = useMemo(() => {
+    if (baselineResult.baseline === null) {
+      return new Set();
+    }
+
+    return new Set(
+      nonSickEntries
+        .filter((entry) => {
+          const value = toPlottableNumber(entry[selectedSource.dataKey], { excludeZero: true });
+          return (
+            value !== null &&
+            value >= baselineResult.baseline + OVULATION_SIGNAL_DELTA &&
+            entry.date
+          );
+        })
+        .map((entry) => entry.date)
+    );
+  }, [baselineResult.baseline, nonSickEntries, selectedSource.dataKey]);
+
+  const spottingDateSet = useMemo(
+    () =>
+      new Set(
+        entries
+          .filter(
+            (entry) =>
+              entry.date &&
+              String(entry.bleeding || "").toLowerCase() === "spotting" &&
+              entry.period !== true
+          )
+          .map((entry) => entry.date)
+      ),
+    [entries]
+  );
+
+  const periodDateSet = useMemo(
+    () =>
+      new Set(
+        entries
+          .filter(
+            (entry) =>
+              entry.date &&
+              (entry.period === true ||
+                ["light", "medium", "heavy"].includes(String(entry.bleeding || "").toLowerCase()))
+          )
+          .map((entry) => entry.date)
+      ),
+    [entries]
+  );
+
+  const exportRows = useMemo(
+    () =>
+      baselinePoints.map((point) => {
+        let baselinePosition = "No baseline";
+
+        if (baselineResult.baseline !== null) {
+          if (point.value > baselineResult.baseline) {
+            baselinePosition = "Above baseline";
+          } else if (point.value < baselineResult.baseline) {
+            baselinePosition = "Below baseline";
+          } else {
+            baselinePosition = "At baseline";
+          }
+        }
+
+        return {
+          date: point.date,
+          cycleDay: point.cycleDay,
+          temperature: point.value,
+          baselinePosition,
+        };
+      }),
+    [baselinePoints, baselineResult.baseline]
+  );
+
+  return (
+    <section
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "10px",
+        padding: "20px",
+        display: "grid",
+        gap: "14px",
+      }}
+    >
+      <div style={{ display: "grid", gap: "8px" }}>
+        <h2 style={{ margin: 0 }}>Temperature</h2>
+
+        <label style={{ display: "grid", gap: "6px", maxWidth: "260px" }}>
+          <span style={{ fontSize: "0.9rem", color: "#444" }}>Temperature Source</span>
+          <select
+            value={selectedSource.key}
+            onChange={(event) => setSelectedSourceKey(event.target.value)}
+            style={{
+              padding: "10px",
+              borderRadius: "8px",
+              border: "1px solid #ccc",
+              background: "#fff",
+            }}
+          >
+            {TEMPERATURE_SOURCES.map((source) => (
+              <option key={source.key} value={source.key}>
+                {source.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <SimpleLineChart
+        title={selectedSource.label}
+        entries={nonSickEntries}
+        excludeZero
+        showCycleDayTicks
+        confirmedDateSet={confirmedOvulationDateSet}
+        confirmedLabel="Confirmed Ovulation (Manual)"
+        estimatedDateSet={estimatedOvulationDateSet}
+        estimatedLabel="Estimated Ovulation (Calculated)"
+        aboveBaselineDateSet={aboveBaselineDateSet}
+        aboveBaselineLabel={`Above Baseline (+${OVULATION_SIGNAL_DELTA.toFixed(1)} Ovulation Signal)`}
+        shadedDateSet={periodDateSet}
+        shadedLabel="Period / Bleeding"
+        secondaryShadedDateSet={spottingDateSet}
+        secondaryShadedLabel="Spotting"
+        referenceLineValue={baselineResult.baseline}
+        referenceLineLabel={baselineResult.baseline === null ? "" : "Baseline"}
+        series={[
+          {
+            key: selectedSource.dataKey,
+            label: selectedSource.label,
+            color: selectedSource.color,
+          },
+        ]}
+      />
+
+      {baselineResult.baseline !== null ? (
+        <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
+          Baseline {baselineResult.isEstimated ? "(estimated)" : ""}: {baselineResult.baseline.toFixed(2)}
+        </p>
+      ) : (
+        <p style={{ margin: 0, color: "#666", fontSize: "0.85rem" }}>
+          Baseline: not enough temperature data yet.
+        </p>
+      )}
+
+      <div style={{ display: "grid", gap: "10px" }}>
+        <button
+          type="button"
+          onClick={() => setShowTemperatureExport((previous) => !previous)}
+          style={{
+            justifySelf: "start",
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #c7c7c7",
+            background: "#fff",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {showTemperatureExport ? "Hide Temp Export" : "Export Temp"}
+        </button>
+
+        {showTemperatureExport ? (
+          <section
+            style={{
+              border: "1px solid #e2e2e2",
+              borderRadius: "8px",
+              padding: "12px",
+              background: "#fafafa",
+              display: "grid",
+              gap: "8px",
+            }}
+          >
+            <p style={{ margin: 0, color: "#444", fontSize: "0.9rem" }}>
+              Export snapshot for {selectedSource.label}. This list matches the temperatures currently plotted on the graph.
+            </p>
+
+            {exportRows.length === 0 ? (
+              <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>
+                No plotted temperatures to export for this source yet.
+              </p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    minWidth: "460px",
+                    background: "#fff",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Cycle Day</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Baseline Status</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Temperature</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exportRows.map((row) => (
+                      <tr key={`${row.date || "no-date"}-${row.cycleDay || "no-cd"}-${row.temperature}`}>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.cycleDay ? `CD ${row.cycleDay}` : "CD -"}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.baselinePosition}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.temperature.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
+  const [showLhExport, setShowLhExport] = useState(false);
+  const width = 760;
+  const height = 240;
+  const margin = 28;
+
+  const lhDefinitions = [
+    { key: "lhMorning", label: "Morning", color: "#9c27b0", xOffset: -0.8 },
+    { key: "lhAfternoon", label: "Afternoon", color: "#ff9800", xOffset: 0 },
+    { key: "lhNight", label: "Evening", color: "#26a69a", xOffset: 0.8 },
+  ];
+
+  const points = [];
+
+  entries.forEach((entry, dayIndex) => {
+    lhDefinitions.forEach((definition) => {
+      const value = toPlottableNumber(entry[definition.key], { excludeZero: true });
+
+      if (value === null) {
+        return;
+      }
+
+      points.push({
+        dayIndex,
+        value,
+        label: definition.label,
+        color: definition.color,
+        xOffset: definition.xOffset,
+        date: entry.date,
+        cycleDay: entry.cycleDay,
+      });
+    });
+  });
+
+  const confirmedOvulationPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      ovulationConfirmed: entry.ovulationConfirmed,
+    }))
+    .filter((point) => point.ovulationConfirmed === true && point.date);
+
+  const estimatedOvulationPoint =
+    estimatedOvulationDate
+      ? entries
+          .map((entry, index) => ({
+            index,
+            date: entry.date,
+            cycleDay: entry.cycleDay,
+          }))
+          .find((point) => point.date === estimatedOvulationDate) || null
+      : null;
+
+  const hasData = points.length > 0;
+  const allValues = points.map((point) => point.value);
+  const cyclePeak = hasData ? Math.max(...allValues) : null;
+
+  let minY = hasData ? Math.min(Math.min(...allValues), 1) : 0;
+  let maxY = hasData ? Math.max(Math.max(...allValues), 1) : 1;
+
+  if (minY === maxY) {
+    minY -= 0.5;
+    maxY += 0.5;
+  }
+
+  const xForDayIndex = (dayIndex) => {
+    const denominator = Math.max(entries.length - 1, 1);
+    return margin + (dayIndex / denominator) * (width - margin * 2);
+  };
+
+  const xBandWidth = entries.length <= 1
+    ? 16
+    : Math.max(
+        14,
+        Math.min(32, ((width - margin * 2) / Math.max(entries.length - 1, 1)) * 0.55)
+      );
+
+  const periodIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter(
+        (item) =>
+          item.date &&
+          (entries[item.index].period === true ||
+            ["light", "medium", "heavy"].includes(String(entries[item.index].bleeding || "").toLowerCase()))
+      )
+      .map((item) => item.index)
+  );
+
+  const spottingIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter(
+        (item) =>
+          item.date &&
+          String(entries[item.index].bleeding || "").toLowerCase() === "spotting" &&
+          entries[item.index].period !== true
+      )
+      .map((item) => item.index)
+  );
+
+  const perDayNudge = Math.max(
+    3,
+    Math.min(10, (width - margin * 2) / Math.max(entries.length, 2) * 0.35)
+  );
+
+  const xForPoint = (point) => xForDayIndex(point.dayIndex) + point.xOffset * perDayNudge;
+
+  const yForValue = (value) => {
+    return margin + ((maxY - value) / (maxY - minY)) * (height - margin * 2);
+  };
+
+  const overlapWithPositive = cyclePeak !== null && Math.abs(cyclePeak - 1) < 0.05;
+
+  const polylinePoints = points
+    .map((point) => `${xForPoint(point)},${yForValue(point.value)}`)
+    .join(" ");
+
+  const cycleDayTicks = buildCycleDayTicks(entries);
+
+  const lhExportRows = points.map((point) => ({
+    cycleDay: point.cycleDay,
+    date: point.date,
+    timeOfDay: point.label,
+    value: point.value,
+    status: point.value >= LH_POSITIVE_THRESHOLD ? "Positive" : "Negative",
+  }));
+
+  return (
+    <section
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "10px",
+        padding: "20px",
+      }}
+    >
+      <h2 style={{ marginTop: 0 }}>LH Throughout Cycle</h2>
+
+      {!hasData ? (
+        <div
+          style={{
+            height: "220px",
+            borderRadius: "8px",
+            background: "#f6f6f6",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            color: "#666",
+          }}
+        >
+          No LH data in this cycle yet.
+        </div>
+      ) : (
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label="LH timeline chart"
+          style={{
+            width: "100%",
+            maxWidth: `${width}px`,
+            background: "#fff",
+            borderRadius: "8px",
+            border: "1px solid #eee",
+            overflow: "visible",
+          }}
+        >
+          <line
+            x1={margin}
+            y1={height - margin}
+            x2={width - margin}
+            y2={height - margin}
+            stroke="#d8d8d8"
+            strokeWidth="1"
+          />
+
+          <line
+            x1={margin}
+            y1={margin}
+            x2={margin}
+            y2={height - margin}
+            stroke="#d8d8d8"
+            strokeWidth="1"
+          />
+
+          {Array.from(spottingIndexSet)
+            .filter((index) => !periodIndexSet.has(index))
+            .map((index) => (
+              <rect
+                key={`lh-spotting-${index}`}
+                x={xForDayIndex(index) - xBandWidth / 2}
+                y={margin}
+                width={xBandWidth}
+                height={height - margin * 2}
+                fill="#f57c00"
+                opacity="0.16"
+                rx="4"
+              />
+            ))}
+
+          {Array.from(periodIndexSet).map((index) => (
+            <rect
+              key={`lh-period-${index}`}
+              x={xForDayIndex(index) - xBandWidth / 2}
+              y={margin}
+              width={xBandWidth}
+              height={height - margin * 2}
+              fill="#b71c1c"
+              opacity="0.14"
+              rx="4"
+            />
+          ))}
+
+          {estimatedOvulationPoint ? (
+            <line
+              x1={xForDayIndex(estimatedOvulationPoint.index)}
+              y1={margin}
+              x2={xForDayIndex(estimatedOvulationPoint.index)}
+              y2={height - margin}
+              stroke="#ef6c00"
+              strokeWidth="2"
+              strokeDasharray="5 4"
+              opacity="0.9"
+            />
+          ) : null}
+
+          {confirmedOvulationPoints.map((point) => (
+            <line
+              key={`lh-confirmed-${point.index}`}
+              x1={xForDayIndex(point.index)}
+              y1={margin}
+              x2={xForDayIndex(point.index)}
+              y2={height - margin}
+              stroke="#c62828"
+              strokeWidth="2.4"
+              opacity="0.95"
+            />
+          ))}
+
+          {hasData ? (
+            <g>
+              <line
+                x1={margin}
+                y1={yForValue(1)}
+                x2={width - margin}
+                y2={yForValue(1)}
+                stroke="#1f1f1f"
+                strokeWidth="1.5"
+                strokeDasharray="5 4"
+                opacity="0.85"
+              />
+              <text
+                x={margin - 10}
+                y={yForValue(1) + (overlapWithPositive ? 12 : 3)}
+                fill="#333"
+                fontSize="10"
+                textAnchor="end"
+              >
+                Positive
+              </text>
+            </g>
+          ) : null}
+
+          {cyclePeak !== null && cyclePeak >= minY && cyclePeak <= maxY ? (
+            <g>
+              <line
+                x1={margin}
+                y1={yForValue(cyclePeak)}
+                x2={width - margin}
+                y2={yForValue(cyclePeak)}
+                stroke="#6a1b9a"
+                strokeWidth="1.75"
+                strokeDasharray="2 3"
+                opacity="0.9"
+              />
+              <text
+                x={margin - 10}
+                y={yForValue(cyclePeak) + (overlapWithPositive ? -7 : -4)}
+                fill="#6a1b9a"
+                fontSize="10"
+                textAnchor="end"
+              >
+                Peak
+              </text>
+            </g>
+          ) : null}
+
+          <polyline
+            fill="none"
+            stroke="#4f4f4f"
+            strokeWidth="2.25"
+            points={polylinePoints}
+          />
+
+          {points.map((point, pointIndex) => (
+            <circle
+              key={`${point.label}-${pointIndex}`}
+              cx={xForPoint(point)}
+              cy={yForValue(point.value)}
+              r="3.75"
+              fill={point.color}
+            >
+              <title>
+                {formatPointLabel({
+                  seriesLabel: point.label,
+                  value: point.value,
+                  date: point.date,
+                  cycleDay: point.cycleDay,
+                })}
+              </title>
+            </circle>
+          ))}
+
+          {cycleDayTicks.map((tick) => (
+            <g key={`lh-cd-${tick.index}-${tick.label}`}>
+              <line
+                x1={xForDayIndex(tick.index)}
+                y1={height - margin}
+                x2={xForDayIndex(tick.index)}
+                y2={height - margin + 4}
+                stroke="#8c8c8c"
+                strokeWidth="1"
+              />
+              <text
+                x={xForDayIndex(tick.index)}
+                y={height - 6}
+                fill="#666"
+                fontSize="10"
+                textAnchor="middle"
+              >
+                {tick.label}
+              </text>
+            </g>
+          ))}
+
+        </svg>
+      )}
+
+      {hasData ? (
+        <div style={{ marginTop: "8px", color: "#666", fontSize: "0.85rem" }}>
+          Min: {minY.toFixed(2)} | Max: {maxY.toFixed(2)}
+        </div>
+      ) : null}
+
+      <div style={{ display: "grid", gap: "10px", marginTop: "10px" }}>
+        <button
+          type="button"
+          onClick={() => setShowLhExport((previous) => !previous)}
+          style={{
+            justifySelf: "start",
+            padding: "10px 14px",
+            borderRadius: "8px",
+            border: "1px solid #c7c7c7",
+            background: "#fff",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {showLhExport ? "Hide LH Export" : "Export LH"}
+        </button>
+
+        {showLhExport ? (
+          <section
+            style={{
+              border: "1px solid #e2e2e2",
+              borderRadius: "8px",
+              padding: "12px",
+              background: "#fafafa",
+              display: "grid",
+              gap: "8px",
+            }}
+          >
+            <p style={{ margin: 0, color: "#444", fontSize: "0.9rem" }}>
+              Export snapshot for LH. This list matches the LH points currently plotted on the graph.
+            </p>
+
+            {lhExportRows.length === 0 ? (
+              <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>
+                No plotted LH values to export yet.
+              </p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    minWidth: "560px",
+                    background: "#fff",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Cycle Day</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Date</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Time</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>LH Value</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lhExportRows.map((row, index) => (
+                      <tr key={`${row.date || "no-date"}-${row.cycleDay || "no-cd"}-${row.timeOfDay}-${index}`}>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.cycleDay ? `CD ${row.cycleDay}` : "CD -"}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.date || "Unknown"}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.timeOfDay}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.value.toFixed(2)}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {row.status}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "10px",
+          marginTop: "12px",
+        }}
+      >
+        {lhDefinitions.map((item) => (
+          <span
+            key={item.key}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+              fontSize: "0.9rem",
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: "10px",
+                height: "10px",
+                borderRadius: "999px",
+                background: item.color,
+              }}
+            />
+            {item.label}
+          </span>
+        ))}
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#333",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "16px",
+              borderTop: "2px dashed #1f1f1f",
+              opacity: 0.85,
+            }}
+          />
+          Positive
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#6a1b9a",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "16px",
+              borderTop: "2px dashed #6a1b9a",
+              opacity: 0.9,
+            }}
+          />
+          Peak
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#6d1111",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "16px",
+              borderTop: "2px solid #c62828",
+            }}
+          />
+          Confirmed Ovulation (Manual)
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#a34a00",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "16px",
+              borderTop: "2px dashed #ef6c00",
+            }}
+          />
+          Estimated Ovulation (Calculated)
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#7a1a1a",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              background: "rgba(183, 28, 28, 0.14)",
+              border: "1px solid rgba(183, 28, 28, 0.35)",
+              borderRadius: "2px",
+            }}
+          />
+          Period / Bleeding
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            fontSize: "0.9rem",
+            color: "#8f4d00",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              background: "rgba(245, 124, 0, 0.16)",
+              border: "1px solid rgba(143, 77, 0, 0.35)",
+              borderRadius: "2px",
+            }}
+          />
+          Spotting
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function UnprotectedSexTimelineChart({ entries, estimatedOvulationDate = null }) {
+  const width = 760;
+  const height = 250;
+  const margin = 92;
+
+  function getWindowChanceFromDistance(distance) {
+    // Only fertile-window days get a non-zero estimate.
+    if (distance <= -6 || distance >= 3) return 0;
+    if (distance === -5) return 4;
+    if (distance === -4) return 8;
+    if (distance === -3) return 13;
+    if (distance === -2) return 18;
+    if (distance === -1) return 24;
+    if (distance === 0) return 20;
+    if (distance === 1) return 10;
+    if (distance === 2) return 4;
+    return 0;
+  }
+
+  function getEstimatedChancePercent(dayIndex, ovulationIndices, peakIndices) {
+    const referenceIndices = ovulationIndices.length > 0 ? ovulationIndices : peakIndices;
+
+    if (referenceIndices.length === 0) {
+      return 0;
+    }
+
+    const combined = Math.max(
+      ...referenceIndices.map((index) => getWindowChanceFromDistance(dayIndex - index))
+    );
+
+    return combined;
+  }
+
+  const eventPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      intercourse: entry.intercourse,
+      usedProtection: entry.usedProtection,
+      protectionType: entry.protectionType,
+    }))
+    .filter(
+      (point) =>
+        point.intercourse === true &&
+        (point.usedProtection === false || point.protectionType === "none")
+    );
+
+  const ovulationPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      ovulationConfirmed: entry.ovulationConfirmed,
+    }))
+    .filter((point) => point.ovulationConfirmed === true);
+
+  const estimatedOvulationPoint =
+    estimatedOvulationDate
+      ? entries
+          .map((entry, index) => ({
+            index,
+            date: entry.date,
+            cycleDay: entry.cycleDay,
+          }))
+          .find((point) => point.date === estimatedOvulationDate) || null
+      : null;
+
+  const peakPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      peak: entry.peak,
+    }))
+    .filter((point) => point.peak === true);
+
+  const ovulationIndices = ovulationPoints.map((point) => point.index);
+  const estimatedIndices = estimatedOvulationPoint ? [estimatedOvulationPoint.index] : [];
+  const peakIndices = peakPoints.map((point) => point.index);
+
+  const eventPointsWithChance = eventPoints.map((point) => ({
+    ...point,
+    chancePercent: getEstimatedChancePercent(
+      point.index,
+      ovulationIndices.length > 0 ? ovulationIndices : estimatedIndices,
+      peakIndices
+    ),
+  }));
+
+  const xForIndex = (index) => {
+    const denominator = Math.max(entries.length - 1, 1);
+    return margin + (index / denominator) * (width - margin * 2);
+  };
+
+  const xBandWidth = entries.length <= 1
+    ? 16
+    : Math.max(
+        14,
+        Math.min(32, ((width - margin * 2) / Math.max(entries.length - 1, 1)) * 0.55)
+      );
+
+  const periodIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter(
+        (item) =>
+          item.date &&
+          (entries[item.index].period === true ||
+            ["light", "medium", "heavy"].includes(String(entries[item.index].bleeding || "").toLowerCase()))
+      )
+      .map((item) => item.index)
+  );
+
+  const spottingIndexSet = new Set(
+    entries
+      .map((entry, index) => ({ index, date: entry.date }))
+      .filter(
+        (item) =>
+          item.date &&
+          String(entries[item.index].bleeding || "").toLowerCase() === "spotting" &&
+          entries[item.index].period !== true
+      )
+      .map((item) => item.index)
+  );
+
+  function assignPercentLabelRows(pointsWithChance) {
+    const rowLastX = [];
+    const minSpacing = 34;
+
+    return pointsWithChance.map((point) => {
+      const x = xForIndex(point.index);
+      let row = 0;
+
+      while (row < rowLastX.length && x - rowLastX[row] < minSpacing) {
+        row += 1;
+      }
+
+      rowLastX[row] = x;
 
       return {
-        date: entry.date,
-        cycleDay: cycleDayValue,
-        temp: temperatureValue,
-        ovulationConfirmed: entry.ovulationConfirmed === true,
+        ...point,
+        labelRow: row,
+        x,
       };
-    })
-    .filter(Boolean);
+    });
+  }
+
+  const ovulationLaneY = 52;
+  const peakLaneY = 84;
+  const unprotectedLaneY = 116;
+  const axisY = 146;
+  const cycleDayTicks = buildCycleDayTicks(entries);
+  const eventPointsWithLayout = assignPercentLabelRows(eventPointsWithChance);
+
+  return (
+    <section
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "10px",
+        padding: "20px",
+      }}
+    >
+      <h2 style={{ marginTop: 0 }}>Unprotected Sex Events</h2>
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Unprotected sex timeline"
+        style={{
+          width: "100%",
+          maxWidth: `${width}px`,
+          background: "#fff",
+          borderRadius: "8px",
+          border: "1px solid #eee",
+        }}
+      >
+        <line
+          x1={margin}
+          y1={ovulationLaneY}
+          x2={width - margin}
+          y2={ovulationLaneY}
+          stroke="#e3edf9"
+          strokeWidth="1"
+        />
+
+        {Array.from(spottingIndexSet)
+          .filter((index) => !periodIndexSet.has(index))
+          .map((index) => (
+            <rect
+              key={`unprotected-spotting-${index}`}
+              x={xForIndex(index) - xBandWidth / 2}
+              y={ovulationLaneY - 10}
+              width={xBandWidth}
+              height={axisY - (ovulationLaneY - 10)}
+              fill="#f57c00"
+              opacity="0.16"
+              rx="4"
+            />
+          ))}
+
+        {Array.from(periodIndexSet).map((index) => (
+          <rect
+            key={`unprotected-period-${index}`}
+            x={xForIndex(index) - xBandWidth / 2}
+            y={ovulationLaneY - 10}
+            width={xBandWidth}
+            height={axisY - (ovulationLaneY - 10)}
+            fill="#b71c1c"
+            opacity="0.14"
+            rx="4"
+          />
+        ))}
+
+        <line
+          x1={margin}
+          y1={peakLaneY}
+          x2={width - margin}
+          y2={peakLaneY}
+          stroke="#efe3f8"
+          strokeWidth="1"
+        />
+
+        <line
+          x1={margin}
+          y1={unprotectedLaneY}
+          x2={width - margin}
+          y2={unprotectedLaneY}
+          stroke="#f9e3e3"
+          strokeWidth="1"
+        />
+
+        <line
+          x1={margin}
+          y1={axisY}
+          x2={width - margin}
+          y2={axisY}
+          stroke="#d8d8d8"
+          strokeWidth="1.2"
+        />
+
+        <text x="8" y={ovulationLaneY + 3} fill="#0d47a1" fontSize="10" textAnchor="start">
+          Ovulation
+        </text>
+        <text x="8" y={peakLaneY + 3} fill="#6a1b9a" fontSize="10" textAnchor="start">
+          Peak
+        </text>
+        <text x="8" y={unprotectedLaneY + 3} fill="#7f0000" fontSize="10" textAnchor="start">
+          Unprotected
+        </text>
+
+        {eventPointsWithLayout.map((point, pointIndex) => (
+          <g key={`unprotected-${point.index}-${pointIndex}`}>
+            <line
+              x1={point.x}
+              y1={axisY}
+              x2={point.x}
+              y2={unprotectedLaneY}
+              stroke="#e53935"
+              strokeWidth="1.6"
+              opacity="0.95"
+            />
+            <circle
+              cx={point.x}
+              cy={unprotectedLaneY}
+              r="7"
+              fill="#fff"
+              stroke="#7f0000"
+              strokeWidth="2.2"
+            >
+              <title>
+                {`Unprotected sex | ${point.date || "Unknown date"} (CD ${point.cycleDay || "-"})`}
+              </title>
+            </circle>
+            <circle
+              cx={point.x}
+              cy={unprotectedLaneY}
+              r="3"
+              fill="#e53935"
+            />
+            <text
+              x={point.x}
+              y={axisY + 18 + point.labelRow * 14}
+              fill="#7f0000"
+              fontSize="11"
+              fontWeight="800"
+              stroke="#fff"
+              strokeWidth="2"
+              paintOrder="stroke"
+              textAnchor="middle"
+            >
+              {point.chancePercent}%
+            </text>
+          </g>
+        ))}
+
+        {ovulationPoints.map((point, pointIndex) => (
+          <g key={`ovulation-${point.index}-${pointIndex}`}>
+            <line
+              x1={xForIndex(point.index)}
+              y1={axisY}
+              x2={xForIndex(point.index)}
+              y2={ovulationLaneY}
+              stroke="#1e88e5"
+              strokeWidth="1.6"
+              opacity="0.9"
+            />
+            <circle
+              cx={xForIndex(point.index)}
+              cy={ovulationLaneY}
+              r="6.6"
+              fill="#fff"
+              stroke="#0d47a1"
+              strokeWidth="2.4"
+            >
+              <title>
+                {`Ovulation confirmed | ${point.date || "Unknown date"} (CD ${point.cycleDay || "-"})`}
+              </title>
+            </circle>
+          </g>
+        ))}
+
+        {estimatedOvulationPoint ? (
+          <g key={`estimated-ovulation-${estimatedOvulationPoint.index}`}>
+            <line
+              x1={xForIndex(estimatedOvulationPoint.index)}
+              y1={axisY}
+              x2={xForIndex(estimatedOvulationPoint.index)}
+              y2={ovulationLaneY}
+              stroke="#ef6c00"
+              strokeWidth="1.8"
+              strokeDasharray="5 4"
+              opacity="0.95"
+            />
+            <rect
+              x={xForIndex(estimatedOvulationPoint.index) - 5.5}
+              y={ovulationLaneY - 5.5}
+              width="11"
+              height="11"
+              fill="#fff3e0"
+              stroke="#ef6c00"
+              strokeWidth="2"
+              rx="2"
+            >
+              <title>
+                {`Estimated ovulation | ${estimatedOvulationPoint.date || "Unknown date"} (CD ${estimatedOvulationPoint.cycleDay || "-"})`}
+              </title>
+            </rect>
+          </g>
+        ) : null}
+
+        {peakPoints.map((point, pointIndex) => (
+          <g key={`peak-${point.index}-${pointIndex}`}>
+            <line
+              x1={xForIndex(point.index)}
+              y1={axisY}
+              x2={xForIndex(point.index)}
+              y2={peakLaneY}
+              stroke="#8e24aa"
+              strokeWidth="1.6"
+              opacity="0.9"
+            />
+            <polygon
+              points={`${xForIndex(point.index)},${peakLaneY - 7} ${xForIndex(point.index) + 7},${peakLaneY} ${xForIndex(point.index)},${peakLaneY + 7} ${xForIndex(point.index) - 7},${peakLaneY}`}
+              fill="#6a1b9a"
+            >
+              <title>
+                {`Peak | ${point.date || "Unknown date"} (CD ${point.cycleDay || "-"})`}
+              </title>
+            </polygon>
+          </g>
+        ))}
+
+        {cycleDayTicks.map((tick) => (
+          <g key={`unprotected-cd-${tick.index}`}>
+            <line
+              x1={xForIndex(tick.index)}
+              y1={axisY}
+              x2={xForIndex(tick.index)}
+              y2={axisY + 4}
+              stroke="#8c8c8c"
+              strokeWidth="1"
+            />
+            <text
+              x={xForIndex(tick.index)}
+              y={height - 8}
+              fill="#666"
+              fontSize="10"
+              textAnchor="middle"
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
+      </svg>
+
+      {eventPoints.length === 0 ? (
+        <p style={{ margin: "10px 0 0", color: "#666" }}>
+          No unprotected sex logged in this cycle.
+        </p>
+      ) : (
+        <p style={{ margin: "10px 0 0", color: "#666" }}>
+          {eventPoints.length} unprotected event{eventPoints.length === 1 ? "" : "s"} logged.
+        </p>
+      )}
+
+      <p style={{ margin: "6px 0 0", color: "#777", fontSize: "0.82rem" }}>
+        Disclaimer: Estimated only on the data you entered.
+      </p>
+
+      <div
+        style={{
+          marginTop: "10px",
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "12px",
+          color: "#444",
+          fontSize: "0.88rem",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "10px",
+              height: "10px",
+              borderRadius: "999px",
+              border: "2px solid #7f0000",
+              background: "#fff",
+              boxSizing: "border-box",
+              position: "relative",
+            }}
+          />
+          Unprotected Sex
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "9px",
+              height: "9px",
+              borderRadius: "999px",
+              border: "2px solid #0d47a1",
+              background: "#fff",
+              boxSizing: "border-box",
+            }}
+          />
+          Ovulation Confirmed
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "9px",
+              height: "9px",
+              background: "#fff3e0",
+              border: "2px solid #ef6c00",
+              boxSizing: "border-box",
+            }}
+          />
+          Estimated Ovulation
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "8px",
+              height: "8px",
+              background: "#6a1b9a",
+              transform: "rotate(45deg)",
+              display: "inline-block",
+            }}
+          />
+          Peak
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              background: "rgba(183, 28, 28, 0.14)",
+              border: "1px solid rgba(183, 28, 28, 0.35)",
+              borderRadius: "2px",
+            }}
+          />
+          Period / Bleeding
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              background: "rgba(245, 124, 0, 0.16)",
+              border: "1px solid rgba(143, 77, 0, 0.35)",
+              borderRadius: "2px",
+            }}
+          />
+          Spotting
+        </span>
+      </div>
+    </section>
+  );
 }
 
 function CycleDashboard() {
-  const [username, setUsername] = useState(DASHBOARD_USERNAMES[0]);
   const [entries, setEntries] = useState([]);
-  const [status, setStatus] = useState("Loading dashboard data...");
-  const [rangePreset, setRangePreset] = useState("all");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
   const [selectedCycleStartDate, setSelectedCycleStartDate] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [showEstimateDetails, setShowEstimateDetails] = useState(false);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
 
   useEffect(() => {
-    let cancelled = false;
-
     async function loadEntries() {
       try {
-        setStatus("Loading dashboard data...");
+        setIsLoading(true);
+        setErrorMessage("");
 
-        const response = await fetch(`http://localhost:3000/api/cycle?username=${encodeURIComponent(username)}`);
+        const response = await fetch(
+          `http://localhost:3000/api/cycle?username=${encodeURIComponent(CURRENT_USERNAME)}`
+        );
 
         if (!response.ok) {
-          throw new Error("Could not load cycle entries.");
+          throw new Error(`Could not load dashboard data (${response.status}).`);
         }
 
         const data = await response.json();
+        const sorted = [...data].sort((a, b) => (a.date > b.date ? 1 : -1));
 
-        if (cancelled) return;
-
-        setEntries(data);
-        setStatus(data.length === 0 ? "No entries yet for this user." : "");
+        setEntries(sorted);
       } catch (error) {
-        if (cancelled) return;
-
         console.error(error);
-        setStatus("Could not load dashboard. Make sure backend is running on port 3000.");
+        setErrorMessage(error.message || "Could not load dashboard data.");
+      } finally {
+        setIsLoading(false);
       }
     }
 
     loadEntries();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [username]);
+  }, []);
 
   const cycleWindows = useMemo(() => buildCycleWindows(entries), [entries]);
 
   useEffect(() => {
     if (cycleWindows.length === 0) {
-      if (selectedCycleStartDate !== "") {
-        setSelectedCycleStartDate("");
-      }
+      setSelectedCycleStartDate("");
       return;
     }
 
-    const hasSelection = cycleWindows.some(
-      (cycleWindow) => cycleWindow.startDate === selectedCycleStartDate
-    );
+    setSelectedCycleStartDate((previousDate) => {
+      if (previousDate && cycleWindows.some((cycle) => cycle.startDate === previousDate)) {
+        return previousDate;
+      }
 
-    if (!hasSelection) {
-      setSelectedCycleStartDate(cycleWindows.at(-1).startDate);
-    }
-  }, [cycleWindows, selectedCycleStartDate]);
-
-  const selectedCycleWindow = useMemo(() => {
-    if (!selectedCycleStartDate) {
-      return null;
-    }
-
-    return (
-      cycleWindows.find(
-        (cycleWindow) => cycleWindow.startDate === selectedCycleStartDate
-      ) || null
-    );
-  }, [cycleWindows, selectedCycleStartDate]);
-
-  const dashboardData = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => (a.date > b.date ? 1 : -1));
-    const filtered = sorted.filter((entry) =>
-      isInDateRange(entry.date, rangePreset, startDate, endDate)
-    );
-
-    const thermometerPoints = filtered
-      .map((entry) => {
-        const thermometerTemp = toNumber(entry.thermometerTemp);
-        if (thermometerTemp === null) return null;
-
-        return {
-          label: entry.date,
-          y: thermometerTemp,
-        };
-      })
-      .filter(Boolean);
-
-    const wristTemperaturePoints = filtered
-      .map((entry) => {
-        const wristTemp = toNumber(entry.wristTemp);
-        if (wristTemp === null) return null;
-
-        return {
-          label: entry.date,
-          y: wristTemp,
-        };
-      })
-      .filter(Boolean);
-
-    const lhPoints = filtered
-      .map((entry) => {
-        const morning = toNumber(entry.lhMorning);
-        const afternoon = toNumber(entry.lhAfternoon);
-        const night = toNumber(entry.lhNight);
-        const value =
-          morning !== null || afternoon !== null || night !== null
-            ? Math.max(morning ?? -Infinity, afternoon ?? -Infinity, night ?? -Infinity)
-            : null;
-
-        if (value === null || value === -Infinity) return null;
-
-        return {
-          label: entry.date,
-          y: value,
-        };
-      })
-      .filter(Boolean);
-
-    const cycleSummaries = summarizeLoggedCycles(filtered);
-
-    const thermometerCycleDayPoints = buildCycleDayTemperaturePoints(filtered, "thermometerTemp");
-    const wristCycleDayPoints = buildCycleDayTemperaturePoints(filtered, "wristTemp");
-
-    const symptomCounts = {};
-    const moodCounts = {};
-
-    filtered.forEach((entry) => {
-      normalizeMultiValueField(entry.painSymptoms).forEach((item) => {
-        symptomCounts[item] = (symptomCounts[item] || 0) + 1;
-      });
-
-      normalizeMultiValueField(entry.moodEmotions).forEach((item) => {
-        moodCounts[item] = (moodCounts[item] || 0) + 1;
-      });
+      return cycleWindows.at(-1).startDate;
     });
+  }, [cycleWindows]);
 
-    const ovulationConfirmedDays = filtered.filter((entry) => entry.ovulationConfirmed === true).length;
+  const selectedCycle = useMemo(
+    () => cycleWindows.find((cycle) => cycle.startDate === selectedCycleStartDate) || null,
+    [cycleWindows, selectedCycleStartDate]
+  );
 
-    const unprotectedEntries = sorted.filter((entry) => {
-      if (entry.intercourse !== true) return false;
+  const selectedEntries = selectedCycle?.entries || [];
 
-      const noProtection = entry.usedProtection === false;
-      const pullOut = entry.protectionType === "pull_out";
+  const estimatedOvulation = useMemo(
+    () => estimateOvulationForCycle(selectedEntries),
+    [selectedEntries]
+  );
 
-      return noProtection || pullOut;
-    });
+  const confirmedOvulationDates = useMemo(
+    () =>
+      selectedEntries
+        .filter((entry) => entry.ovulationConfirmed === true && entry.date)
+        .map((entry) => entry.date),
+    [selectedEntries]
+  );
 
-    const lastUnprotectedEntryDate = unprotectedEntries.length > 0 ? unprotectedEntries.at(-1).date : null;
-    const daysSinceNoProtectionSex = getDaysSince(lastUnprotectedEntryDate);
+  const estimatedDiffersFromConfirmed =
+    estimatedOvulation.estimatedOvulationDate &&
+    !confirmedOvulationDates.includes(estimatedOvulation.estimatedOvulationDate);
 
-    const cycleDayValues = filtered
-      .map((entry) => toNumber(entry.cycleDay))
-      .filter((value) => value !== null);
+  useEffect(() => {
+    setShowEstimateDetails(false);
+    setSelectedCandidateIndex(0);
+  }, [selectedCycleStartDate]);
 
-    const cycleDayAverage =
-      cycleDayValues.length > 0
-        ? cycleDayValues.reduce((sum, value) => sum + value, 0) / cycleDayValues.length
-        : null;
+  useEffect(() => {
+    if (!showEstimateDetails) {
+      return;
+    }
 
-    const rangeStart = filtered.length > 0 ? filtered[0].date : null;
-    const lastInRange = filtered.at(-1);
-    const rangeEnd = lastInRange ? lastInRange.date : null;
+    setSelectedCandidateIndex(0);
+  }, [showEstimateDetails, estimatedOvulation.estimatedOvulationDate]);
 
-    return {
-      totalEntries: filtered.length,
-      totalEntriesAllTime: sorted.length,
-      thermometerPoints,
-      wristTemperaturePoints,
-      lhPoints,
-      cycleSummaries,
-      thermometerCycleDayPoints,
-      wristCycleDayPoints,
-      symptomCounts,
-      moodCounts,
-      ovulationConfirmedDays,
-      daysSinceNoProtectionSex,
-      lastUnprotectedEntryDate,
-      cycleDayAverage,
-      rangeStart,
-      rangeEnd,
-    };
-  }, [entries, rangePreset, startDate, endDate]);
+  const selectedCandidateBreakdown =
+    estimatedOvulation.estimatedOvulationTopCandidates[selectedCandidateIndex] || null;
+
+  if (isLoading) {
+    return <p>Loading dashboard...</p>;
+  }
+
+  if (errorMessage) {
+    return <p>Could not load dashboard: {errorMessage}</p>;
+  }
+
+  if (entries.length === 0) {
+    return <p>No cycle entries yet. Add entries first, then come back to dashboard.</p>;
+  }
+
+  if (cycleWindows.length === 0) {
+    return <p>No cycle starts found yet. Set at least one entry to cycle day 1.</p>;
+  }
 
   return (
-    <div style={{ maxWidth: "1050px", margin: "0 auto", display: "grid", gap: "16px" }}>
+    <div
+      style={{
+        maxWidth: "1100px",
+        margin: "0 auto",
+        padding: "20px",
+        display: "grid",
+        gap: "24px",
+      }}
+    >
       <h1 style={{ marginBottom: 0 }}>Cycle Dashboard</h1>
 
-      <div style={{ border: "1px solid #d1d5db", borderRadius: "10px", padding: "12px", display: "grid", gap: "10px" }}>
-        <label style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-          <span style={{ minWidth: "84px" }}>Username</span>
-          <select value={username} onChange={(event) => setUsername(event.target.value)}>
-            {DASHBOARD_USERNAMES.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </label>
+      <section
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: "10px",
+          padding: "20px",
+          display: "grid",
+          gap: "10px",
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Select Cycle</h2>
 
-        <label style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ minWidth: "84px" }}>Date Range</span>
-          <select value={rangePreset} onChange={(event) => setRangePreset(event.target.value)}>
-            {DATE_RANGE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          {rangePreset === "custom" ? (
-            <>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(event) => setStartDate(event.target.value)}
-                aria-label="Start date"
-              />
-              <input
-                type="date"
-                value={endDate}
-                onChange={(event) => setEndDate(event.target.value)}
-                aria-label="End date"
-              />
-            </>
-          ) : null}
-        </label>
+        <select
+          value={selectedCycleStartDate}
+          onChange={(event) => setSelectedCycleStartDate(event.target.value)}
+          style={{
+            maxWidth: "340px",
+            padding: "10px",
+            borderRadius: "8px",
+            border: "1px solid #ccc",
+          }}
+        >
+          {cycleWindows.map((cycle) => (
+            <option key={cycle.startDate} value={cycle.startDate}>
+              {`${cycle.startDate} to ${cycle.endDate} (${cycle.length} entries)`}
+            </option>
+          ))}
+        </select>
 
-        <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", color: "#374151" }}>
-          <span>Entries in Range: {dashboardData.totalEntries}</span>
-          <span>Entries All Time: {dashboardData.totalEntriesAllTime}</span>
-          <span>
-            Range: {dashboardData.rangeStart && dashboardData.rangeEnd ? `${dashboardData.rangeStart} to ${dashboardData.rangeEnd}` : "No entries in selected range"}
-          </span>
-          <span>Ovulation Confirmed Days: {dashboardData.ovulationConfirmedDays}</span>
-          <span>
-            Days Since No-Protection Sex: {dashboardData.daysSinceNoProtectionSex ?? "n/a"}
-          </span>
-          <span>
-            Last No-Protection Date: {dashboardData.lastUnprotectedEntryDate || "n/a"}
-          </span>
-          <span>
-            Avg Cycle Day: {dashboardData.cycleDayAverage !== null ? dashboardData.cycleDayAverage.toFixed(1) : "n/a"}
-          </span>
-        </div>
-      </div>
+        {selectedCycle && (
+          <p style={{ margin: 0, color: "#555" }}>
+            Viewing cycle starting {selectedCycle.startDate} with {selectedCycle.length} logged entries.
+          </p>
+        )}
+      </section>
 
-      {status ? <p>{status}</p> : null}
+      <section
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: "10px",
+          padding: "20px",
+          display: "grid",
+          gap: "10px",
+        }}
+      >
+        <h2 style={{ margin: 0 }}>Ovulation Status</h2>
 
-      <div style={{ display: "grid", gap: "14px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <LineChart
-          title="Thermometer Temperature Trend"
-          color="#dc2626"
-          data={dashboardData.thermometerPoints}
-          description="Tracks thermometer temperatures only."
-        />
-        <LineChart
-          title="Wrist Temperature Trend"
-          color="#2563eb"
-          data={dashboardData.wristTemperaturePoints}
-          description="Tracks wrist temperatures only."
-        />
-        <LineChart
-          title="LH Trend (Daily Peak)"
-          color="#7c3aed"
-          data={dashboardData.lhPoints}
-          description="Shows the highest LH reading logged for each day."
-        />
-        <CycleSummaryCards cycles={dashboardData.cycleSummaries} />
-      </div>
-
-      <div style={{ display: "grid", gap: "14px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <LongCycleDayChart
-          title="Thermometer Temperature by Cycle Day"
-          data={dashboardData.thermometerCycleDayPoints}
-        />
-        <LongCycleDayChart
-          title="Wrist Temperature by Cycle Day"
-          data={dashboardData.wristCycleDayPoints}
-        />
-      </div>
-
-      <div style={{ display: "grid", gap: "14px", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <HorizontalBarChart title="Most Frequent Pain/Symptoms" counts={dashboardData.symptomCounts} />
-        <HorizontalBarChart title="Most Frequent Mood/Emotions" counts={dashboardData.moodCounts} />
-      </div>
-
-      <div style={chartCardStyle}>
-        <h3 style={{ marginTop: 0, marginBottom: "8px" }}>Cycle Day 1 Filter</h3>
-        <p style={chartMetaTextStyle}>
-          Click a Cycle Day 1 date to view all entries from that date until the next Cycle Day 1.
+        <p style={{ margin: 0, color: "#444" }}>
+          Estimated Ovulation (calculated): {estimatedOvulation.estimatedOvulationDate || "Not enough data"}
+          {estimatedOvulation.estimatedOvulationCycleDay ? ` (CD ${estimatedOvulation.estimatedOvulationCycleDay})` : ""}
         </p>
 
-        {cycleWindows.length === 0 ? (
-          <p style={emptyChartTextStyle}>No Cycle Day 1 entries found yet.</p>
-        ) : (
-          <>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "14px" }}>
-              {cycleWindows.map((cycleWindow) => {
-                const isSelected = cycleWindow.startDate === selectedCycleStartDate;
+        <button
+          type="button"
+          onClick={() => setShowEstimateDetails((previous) => !previous)}
+          style={{
+            margin: 0,
+            padding: "0",
+            border: "none",
+            background: "transparent",
+            color: "#0b57d0",
+            textAlign: "left",
+            cursor: "pointer",
+            fontSize: "1rem",
+            fontFamily: "inherit",
+            justifySelf: "start",
+          }}
+          aria-expanded={showEstimateDetails}
+        >
+          Estimated Score: {estimatedOvulation.estimatedOvulationScore} | Confidence: {estimatedOvulation.estimatedOvulationConfidence}
+          {showEstimateDetails ? " (hide why)" : " (click to see why)"}
+        </button>
 
-                return (
-                  <button
-                    key={cycleWindow.startDate}
-                    type="button"
-                    onClick={() => setSelectedCycleStartDate(cycleWindow.startDate)}
-                    style={{
-                      border: isSelected ? "1px solid #0ea5e9" : "1px solid #d1d5db",
-                      background: isSelected ? "#e0f2fe" : "#ffffff",
-                      color: "#0f172a",
-                      borderRadius: "999px",
-                      padding: "8px 12px",
-                      cursor: "pointer",
-                      fontWeight: isSelected ? 600 : 500,
-                    }}
-                  >
-                    {cycleWindow.startDate}
-                  </button>
-                );
-              })}
-            </div>
+        <p style={{ margin: 0, color: "#444" }}>
+          Confirmed Ovulation (manual): {confirmedOvulationDates.length > 0 ? confirmedOvulationDates.join(", ") : "None marked"}
+        </p>
 
-            {selectedCycleWindow ? (
-              <>
-                <div style={{ marginBottom: "10px", color: "#334155" }}>
-                  <strong>Selected window:</strong> {selectedCycleWindow.startDate} to {selectedCycleWindow.endDateExclusive || "latest entry"}
-                  {" "}
-                  ({selectedCycleWindow.entries.length} entries)
-                </div>
+        {estimatedDiffersFromConfirmed ? (
+          <p style={{ margin: 0, color: "#9a3f00", fontWeight: 600 }}>
+            Estimated and confirmed ovulation differ in this cycle. Both markers are shown on graphs.
+          </p>
+        ) : null}
 
-                <div style={{ display: "grid", gap: "8px" }}>
-                  {selectedCycleWindow.entries.map((entry) => (
-                    <details key={`${entry.date}-${entry.id}`} style={{ border: "1px solid #dbe5ef", borderRadius: "10px", padding: "8px 10px", background: "#ffffff" }}>
-                      <summary style={{ cursor: "pointer", fontWeight: 600, color: "#0f172a" }}>
-                        {entry.date} | CD {entry.cycleDay ?? "n/a"}
-                      </summary>
-                      <pre
-                        style={{
-                          margin: "8px 0 0",
-                          background: "#f8fafc",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "8px",
-                          padding: "10px",
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          fontSize: "0.82rem",
-                        }}
+        {showEstimateDetails ? (
+          <div
+            style={{
+              marginTop: "4px",
+              border: "1px solid #e7e7e7",
+              borderRadius: "8px",
+              padding: "12px",
+              background: "#fafafa",
+              display: "grid",
+              gap: "8px",
+            }}
+          >
+            <h3 style={{ margin: 0, fontSize: "1rem" }}>Why This Score Was Given</h3>
+
+            <p style={{ margin: 0, color: "#444" }}>
+              Confidence is based on score: High (10+), Medium (7-9), Low (&lt;7).
+            </p>
+
+            <p style={{ margin: 0, color: "#555", fontSize: "0.9rem" }}>
+              Baseline used: {estimatedOvulation.estimatedBaseline !== null ? estimatedOvulation.estimatedBaseline.toFixed(2) : "Not available"}
+              {estimatedOvulation.estimatedBaseline !== null
+                ? estimatedOvulation.estimatedBaselineIsEstimated
+                  ? " (estimated)"
+                  : " (confirmed)"
+                : ""}
+              {estimatedOvulation.estimatedCycleLhPeak !== null
+                ? ` | Cycle LH peak: ${estimatedOvulation.estimatedCycleLhPeak.toFixed(2)}`
+                : " | Cycle LH peak: Not available"}
+            </p>
+
+            {estimatedOvulation.estimatedOvulationReasons.length > 0 ? (
+              <div style={{ display: "grid", gap: "4px" }}>
+                <p style={{ margin: 0, color: "#333", fontWeight: 600 }}>
+                  Winning day rule breakdown:
+                </p>
+                {estimatedOvulation.estimatedOvulationReasons.map((reason) => (
+                  <p key={reason.code} style={{ margin: 0, color: "#444", fontSize: "0.9rem" }}>
+                    {reason.points >= 0 ? "+" : ""}{reason.points} {reason.label}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: 0, color: "#666" }}>
+                Not enough signal data to produce a strong rule breakdown yet.
+              </p>
+            )}
+
+            {estimatedOvulation.estimatedOvulationTopCandidates.length > 0 ? (
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    minWidth: "520px",
+                    background: "#fff",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Cycle Day</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Date</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Score</th>
+                      <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "8px" }}>Confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {estimatedOvulation.estimatedOvulationTopCandidates.map((candidate, index) => (
+                      <tr
+                        key={`${candidate.date || "no-date"}-${candidate.cycleDay || "no-cd"}-${candidate.score}`}
+                        style={{ background: selectedCandidateIndex === index ? "#fff8ef" : "#fff" }}
                       >
-                        {JSON.stringify(entry, null, 2)}
-                      </pre>
-                    </details>
-                  ))}
-                </div>
-              </>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {candidate.cycleDay ? `CD ${candidate.cycleDay}` : "CD -"}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {candidate.date || "Unknown"}
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCandidateIndex(index)}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              color: "#0b57d0",
+                              cursor: "pointer",
+                              padding: 0,
+                              font: "inherit",
+                              textDecoration: "underline",
+                            }}
+                            aria-label={`Show score breakdown for cycle day ${candidate.cycleDay || "unknown"}`}
+                          >
+                            {candidate.score}
+                          </button>
+                        </td>
+                        <td style={{ borderBottom: "1px solid #f0f0f0", padding: "8px" }}>
+                          {candidate.confidence}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : null}
-          </>
-        )}
-      </div>
+
+            {selectedCandidateBreakdown ? (
+              <div
+                style={{
+                  border: "1px solid #ececec",
+                  borderRadius: "6px",
+                  padding: "10px",
+                  background: "#fff",
+                  display: "grid",
+                  gap: "6px",
+                }}
+              >
+                <p style={{ margin: 0, color: "#333", fontWeight: 600 }}>
+                  Score Breakdown for {selectedCandidateBreakdown.cycleDay ? `CD ${selectedCandidateBreakdown.cycleDay}` : "selected day"}
+                  {selectedCandidateBreakdown.date ? ` (${selectedCandidateBreakdown.date})` : ""}
+                </p>
+
+                {selectedCandidateBreakdown.reasons.length > 0 ? (
+                  selectedCandidateBreakdown.reasons.map((reason) => (
+                    <p key={`${selectedCandidateBreakdown.date || "day"}-${reason.code}`} style={{ margin: 0, color: "#444", fontSize: "0.9rem" }}>
+                      {reason.points >= 0 ? "+" : ""}{reason.points} {reason.label}
+                    </p>
+                  ))
+                ) : (
+                  <p style={{ margin: 0, color: "#666", fontSize: "0.9rem" }}>
+                    No direct scoring rules were triggered for this day.
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            <p style={{ margin: 0, color: "#666", fontSize: "0.82rem" }}>
+              Tie-break rule: if two days have the same score, the earlier cycle day is selected.
+            </p>
+          </div>
+        ) : null}
+      </section>
+
+      <TemperatureSection
+        entries={selectedEntries}
+        estimatedOvulationDate={estimatedOvulation.estimatedOvulationDate}
+      />
+
+      <LhTimelineChart
+        entries={selectedEntries}
+        estimatedOvulationDate={estimatedOvulation.estimatedOvulationDate}
+      />
+
+      <UnprotectedSexTimelineChart
+        entries={selectedEntries}
+        estimatedOvulationDate={estimatedOvulation.estimatedOvulationDate}
+      />
+
     </div>
   );
 }
