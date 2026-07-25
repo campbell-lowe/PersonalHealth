@@ -32,28 +32,45 @@ function parseMultiSelectField(value) {
 }
 
 function toLhNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
 
 function getEntryLhPeak(entry) {
   const morning = toLhNumber(entry.lhMorning);
+  const afternoon = toLhNumber(entry.lhAfternoon);
   const night = toLhNumber(entry.lhNight);
 
-  if (morning === null && night === null) {
+  if (morning === null && afternoon === null && night === null) {
     return null;
   }
 
-  return Math.max(morning ?? -Infinity, night ?? -Infinity);
+  return Math.max(morning ?? -Infinity, afternoon ?? -Infinity, night ?? -Infinity);
 }
 
 function deriveOvulationTest(entry) {
   const lhPeak = getEntryLhPeak(entry);
   if (lhPeak === null) {
-    return "";
+    return "none";
   }
 
-  return lhPeak >= 1 ? "positive" : "negative";
+  if (lhPeak >= 1) {
+    return "positive";
+  }
+
+  if (lhPeak >= 0.6) {
+    return "negative-high";
+  }
+
+  return "negative-low";
 }
 
 function isCycleStart(entry) {
@@ -67,16 +84,18 @@ function mapRowToEntry(row) {
     username: row.username,
     date: row.date,
     cycleDay: row.cycle_day,
+    sick: row.sick === null ? false : Boolean(row.sick),
     wristTemp: row.wrist_temp,
     thermometerTemp: row.thermometer_temp,
     lhMorning: row.lh_morning,
+    lhAfternoon: row.lh_afternoon,
     lhNight: row.lh_night,
     ovulationConfirmed:
       row.ovulation_confirmed === null ? null : Boolean(row.ovulation_confirmed),
     cmAmount: row.cm_amount,
     cmType: row.cm_type,
     period: row.period === null ? null : Boolean(row.period),
-    bleeding: row.bleeding,
+    bleeding: row.bleeding || "none",
     sexDrive: row.sex_drive,
     skinStatus: row.skin_status,
     painSymptoms: parseMultiSelectField(row.pain_symptoms),
@@ -85,7 +104,7 @@ function mapRowToEntry(row) {
     usedProtection:
       row.used_protection === null ? null : Boolean(row.used_protection),
     protectionType: row.protection_type,
-    pregnancyTest: row.pregnancy_test,
+    pregnancyTest: row.pregnancy_test || "not_taken",
     symptoms: JSON.parse(row.symptoms || "[]"),
     medications: JSON.parse(row.medications || "[]"),
     weight: row.weight,
@@ -201,9 +220,35 @@ function isTrueLike(value) {
   return value === true || value === 1 || value === "1" || value === "true" || value === "yes";
 }
 
+function normalizeCycleDayValue(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  const day = Math.floor(numeric);
+  return day >= 1 ? day : null;
+}
+
 function resolveCycleDayForSave(db, username, date, period, requestedCycleDay, callback) {
+  const normalizedRequestedCycleDay = normalizeCycleDayValue(requestedCycleDay);
+
+  // Respect explicit user input and do not auto-rewrite it.
+  if (normalizedRequestedCycleDay !== null) {
+    callback(normalizedRequestedCycleDay);
+    return;
+  }
+
   if (!isTrueLike(period)) {
-    callback(requestedCycleDay);
+    callback(null);
     return;
   }
 
@@ -215,13 +260,13 @@ function resolveCycleDayForSave(db, username, date, period, requestedCycleDay, c
     (err, previousEntry) => {
       if (err) {
         console.error(err);
-        callback(requestedCycleDay);
+        callback(null);
         return;
       }
 
       const previousWasPeriod = previousEntry ? isTrueLike(previousEntry.period) : false;
 
-      callback(previousWasPeriod ? requestedCycleDay : 1);
+      callback(previousWasPeriod ? null : 1);
     }
   );
 }
@@ -300,9 +345,11 @@ router.post("/", (req, res) => {
     username,
     date,
     cycleDay,
+    sick,
     wristTemp,
     thermometerTemp,
     lhMorning,
+    lhAfternoon,
     lhNight,
     ovulationConfirmed,
     cmAmount,
@@ -328,9 +375,11 @@ router.post("/", (req, res) => {
     UPDATE cycle_entries
     SET
       cycle_day = COALESCE(?, cycle_day),
+      sick = COALESCE(?, sick),
       wrist_temp = COALESCE(?, wrist_temp),
       thermometer_temp = COALESCE(?, thermometer_temp),
       lh_morning = COALESCE(?, lh_morning),
+      lh_afternoon = COALESCE(?, lh_afternoon),
       lh_night = COALESCE(?, lh_night),
       ovulation_confirmed = COALESCE(?, ovulation_confirmed),
       cm_amount = COALESCE(?, cm_amount),
@@ -363,9 +412,11 @@ router.post("/", (req, res) => {
         username,
         date,
         cycle_day,
+        sick,
         wrist_temp,
         thermometer_temp,
         lh_morning,
+        lh_afternoon,
         lh_night,
         ovulation_confirmed,
         cm_amount,
@@ -386,15 +437,17 @@ router.post("/", (req, res) => {
         sleep_hours,
         notes
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     `;
 
   resolveCycleDayForSave(db, username, date, period, cycleDay, (finalCycleDay) => {
     const updateParams = [
       finalCycleDay,
+      sick,
       wristTemp,
       thermometerTemp,
       lhMorning,
+      lhAfternoon,
       lhNight,
       ovulationConfirmed,
       cmAmount,
@@ -439,9 +492,11 @@ router.post("/", (req, res) => {
           username,
           date,
           finalCycleDay,
+          sick,
           wristTemp,
           thermometerTemp,
           lhMorning,
+          lhAfternoon,
           lhNight,
           ovulationConfirmed,
           cmAmount,

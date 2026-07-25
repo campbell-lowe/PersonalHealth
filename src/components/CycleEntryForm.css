@@ -114,6 +114,18 @@
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
 
+/* Hide number input spinner arrows to reduce accidental value bumps. */
+.cycle-entry-form input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cycle-entry-form input[type="number"]::-webkit-inner-spin-button,
+.cycle-entry-form input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .survey-input-readonly {
   background: #f3f4f6;
   color: #374151;

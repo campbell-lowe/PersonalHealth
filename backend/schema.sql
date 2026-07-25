@@ -7,10 +7,13 @@ CREATE TABLE IF NOT EXISTS cycle_entries (
 
     cycle_day INTEGER,
 
+    sick BOOLEAN DEFAULT 0,
+
     wrist_temp REAL,
     thermometer_temp REAL,
 
     lh_morning REAL,
+    lh_afternoon REAL,
     lh_night REAL,
 
     ovulation_confirmed BOOLEAN,

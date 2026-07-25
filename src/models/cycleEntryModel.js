@@ -5,11 +5,13 @@ export const emptyCycleEntry = {
 
   date: "",
   cycleDay: 1,
+  sick: false,
 
   wristTemp: "",
   thermometerTemp: "",
 
   lhMorning: "",
+  lhAfternoon: "",
   lhNight: "",
   ovulationTest: "",
   peak: false,
@@ -20,7 +22,7 @@ export const emptyCycleEntry = {
 
   period: false,
 
-  bleeding: "",
+  bleeding: "none",
 
   sexDrive: "",
   skinStatus: "",
@@ -31,7 +33,7 @@ export const emptyCycleEntry = {
   usedProtection: null,
   protectionType: "",
 
-  pregnancyTest: "",
+  pregnancyTest: "not_taken",
 
   symptoms: [],
 

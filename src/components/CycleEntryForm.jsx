@@ -80,6 +80,36 @@ function getInputStateClass(value) {
   return hasValue(value) ? "is-filled" : "is-empty";
 }
 
+function normalizeOptionalNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === "string" && value.trim() === "") {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : value;
+}
+
+function normalizeLhInputValue(rawValue) {
+  if (rawValue === "") {
+    return "";
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return rawValue;
+  }
+
+  return numeric < 0 ? "0" : rawValue;
+}
+
+function isLhField(name) {
+  return name === "lhMorning" || name === "lhAfternoon" || name === "lhNight";
+}
+
 function CycleEntryForm({ initialEntry }, ref) {
   const [entry, setEntry] = useState(emptyCycleEntry);
   const [saveState, setSaveState] = useState("idle");
@@ -143,6 +173,23 @@ function CycleEntryForm({ initialEntry }, ref) {
   function handleChange(event) {
     const { name, value, type, checked } = event.target;
 
+    if (name === "cycleDay") {
+      const digitsOnlyValue = value.replace(/\D/g, "");
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        cycleDay: digitsOnlyValue,
+      }));
+      return;
+    }
+
+    if (isLhField(name)) {
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        [name]: normalizeLhInputValue(value),
+      }));
+      return;
+    }
+
     if (name === "intercourse") {
       const intercourseValue = selectToBoolean(value);
 
@@ -180,6 +227,14 @@ function CycleEntryForm({ initialEntry }, ref) {
       setEntry((previousEntry) => ({
         ...previousEntry,
         period: selectToBoolean(value),
+      }));
+      return;
+    }
+
+    if (name === "sick") {
+      setEntry((previousEntry) => ({
+        ...previousEntry,
+        sick: selectToBoolean(value) ?? false,
       }));
       return;
     }
@@ -240,6 +295,11 @@ function CycleEntryForm({ initialEntry }, ref) {
 
     const payload = {
       ...entry,
+      wristTemp: normalizeOptionalNumber(entry.wristTemp),
+      thermometerTemp: normalizeOptionalNumber(entry.thermometerTemp),
+      lhMorning: normalizeOptionalNumber(entry.lhMorning),
+      lhAfternoon: normalizeOptionalNumber(entry.lhAfternoon),
+      lhNight: normalizeOptionalNumber(entry.lhNight),
       sleepHours: sleepHoursDecimal,
     };
 
@@ -318,6 +378,40 @@ function CycleEntryForm({ initialEntry }, ref) {
     await saveEntry();
   }
 
+  function handleFormKeyDown(event) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
+      return;
+    }
+
+    const targetTag = event.target.tagName;
+    if (targetTag === "TEXTAREA" || targetTag === "SELECT") {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (saveState !== "saving") {
+      event.currentTarget.requestSubmit();
+    }
+  }
+
+  function handleLhKeyDown(event) {
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+    }
+  }
+
+  function handleFormWheelCapture(event) {
+    if (event.target instanceof HTMLInputElement && event.target.type === "number") {
+      event.target.blur();
+      event.preventDefault();
+    }
+  }
+
   useImperativeHandle(
     ref,
     () => ({
@@ -339,7 +433,13 @@ function CycleEntryForm({ initialEntry }, ref) {
   );
 
   return (
-    <form onSubmit={handleSubmit} className="cycle-entry-form" noValidate>
+    <form
+      onSubmit={handleSubmit}
+      onKeyDown={handleFormKeyDown}
+      onWheelCapture={handleFormWheelCapture}
+      className="cycle-entry-form"
+      noValidate
+    >
       <div className="survey-header">
         <h2>Daily Cycle Entry</h2>
         <p>Quickly log today and save. Automatic fields update right after save.</p>
@@ -377,18 +477,32 @@ function CycleEntryForm({ initialEntry }, ref) {
         <label className="survey-row">
           <span className="survey-label">Cycle Day</span>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             name="cycleDay"
             value={entry.cycleDay ?? ""}
             onChange={handleChange}
             className={`survey-input ${getInputStateClass(entry.cycleDay)}`}
-            min="1"
+            placeholder="Auto unless typed"
           />
         </label>
       </section>
 
       <section className="survey-section">
         <h3>Fertility Markers</h3>
+
+        <label className="survey-row">
+          <span className="survey-label">Sick?</span>
+          <select
+            name="sick"
+            value={booleanToSelectValue(entry.sick)}
+            onChange={handleChange}
+            className={`survey-input ${getInputStateClass(entry.sick)}`}
+          >
+            <option value="yes">True</option>
+            <option value="no">False</option>
+          </select>
+        </label>
 
         <label className="survey-row">
           <span className="survey-label">Wrist Temperature</span>
@@ -398,6 +512,7 @@ function CycleEntryForm({ initialEntry }, ref) {
             name="wristTemp"
             value={entry.wristTemp ?? ""}
             onChange={handleChange}
+            onKeyDown={handleLhKeyDown}
             className={`survey-input ${getInputStateClass(entry.wristTemp)}`}
           />
         </label>
@@ -410,6 +525,7 @@ function CycleEntryForm({ initialEntry }, ref) {
             name="thermometerTemp"
             value={entry.thermometerTemp ?? ""}
             onChange={handleChange}
+            onKeyDown={handleLhKeyDown}
             className={`survey-input ${getInputStateClass(entry.thermometerTemp)}`}
           />
         </label>
@@ -419,10 +535,26 @@ function CycleEntryForm({ initialEntry }, ref) {
           <input
             type="number"
             step="0.01"
+            min="0"
             name="lhMorning"
             value={entry.lhMorning ?? ""}
             onChange={handleChange}
+            onKeyDown={handleLhKeyDown}
             className={`survey-input ${getInputStateClass(entry.lhMorning)}`}
+          />
+        </label>
+
+        <label className="survey-row">
+          <span className="survey-label">LH Afternoon</span>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            name="lhAfternoon"
+            value={entry.lhAfternoon ?? ""}
+            onChange={handleChange}
+            onKeyDown={handleLhKeyDown}
+            className={`survey-input ${getInputStateClass(entry.lhAfternoon)}`}
           />
         </label>
 
@@ -431,9 +563,11 @@ function CycleEntryForm({ initialEntry }, ref) {
           <input
             type="number"
             step="0.01"
+            min="0"
             name="lhNight"
             value={entry.lhNight ?? ""}
             onChange={handleChange}
+            onKeyDown={handleLhKeyDown}
             className={`survey-input ${getInputStateClass(entry.lhNight)}`}
           />
         </label>
@@ -442,9 +576,9 @@ function CycleEntryForm({ initialEntry }, ref) {
           <span className="survey-label">Ovulation Test</span>
           <input
             type="text"
-            value={entry.ovulationTest || ""}
+            value={entry.ovulationTest || "none"}
             readOnly
-            className={`survey-input survey-input-readonly ${getInputStateClass(entry.ovulationTest)}`}
+            className={`survey-input survey-input-readonly ${getInputStateClass(entry.ovulationTest || "none")}`}
           />
         </label>
 
@@ -667,10 +801,11 @@ function CycleEntryForm({ initialEntry }, ref) {
                   <option value="shot">Birth Control Shot</option>
                   <option value="diaphragm">Diaphragm</option>
                   <option value="spermicide">Spermicide</option>
+                  <option value="not_vaginal_sex">Not Vaginal Sex</option>
                   <option value="emergency_contraception">Emergency Contraception</option>
                   <option value="vasectomy">Partner Vasectomy</option>
                   <option value="tubal_ligation">Tubal Ligation</option>
-                  <option value="pull_out">Pull Out (hmm, maybe protection but probably not)</option>
+                  <option value="pull_out">Pull-Out / No Ejaculation</option>
                   <option value="other">Other</option>
                 </select>
               </label>

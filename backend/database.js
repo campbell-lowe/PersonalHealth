@@ -62,9 +62,11 @@ function ensureUsernameDateUniqueConstraint() {
                     username TEXT NOT NULL DEFAULT 'campbell.lowe',
                     date TEXT NOT NULL,
                     cycle_day INTEGER,
+                    sick BOOLEAN DEFAULT 0,
                     wrist_temp REAL,
                     thermometer_temp REAL,
                     lh_morning REAL,
+                    lh_afternoon REAL,
                     lh_night REAL,
                     ovulation_confirmed BOOLEAN,
                     cm_amount TEXT,
@@ -95,6 +97,7 @@ function ensureUsernameDateUniqueConstraint() {
                     wrist_temp,
                     thermometer_temp,
                     lh_morning,
+                    lh_afternoon,
                     lh_night,
                     ovulation_confirmed,
                     cm_amount,
@@ -123,6 +126,7 @@ function ensureUsernameDateUniqueConstraint() {
                     wrist_temp,
                     thermometer_temp,
                     lh_morning,
+                    lh_afternoon,
                     lh_night,
                     ovulation_confirmed,
                     cm_amount,
@@ -171,6 +175,8 @@ db.exec(schema, (error) => {
         ensureColumn("cycle_entries", "skin_status", "TEXT");
         ensureColumn("cycle_entries", "pain_symptoms", "TEXT");
         ensureColumn("cycle_entries", "mood_emotions", "TEXT");
+        ensureColumn("cycle_entries", "lh_afternoon", "REAL");
+        ensureColumn("cycle_entries", "sick", "BOOLEAN DEFAULT 0");
         ensureColumn("cycle_entries", "ovulation_confirmed", "BOOLEAN");
         ensureColumn("cycle_entries", "period", "BOOLEAN");
         ensureColumn("cycle_entries", "used_protection", "BOOLEAN");
