@@ -157,6 +157,29 @@
   color: #675b52;
 }
 
+.sleep-pull-card {
+  gap: 12px;
+}
+
+.sleep-pull-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.sleep-pull-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #ecdfd2;
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: #fffdf9;
+  color: #5f5045;
+}
+
 @media (max-width: 900px) {
   .wellness-grid-2,
   .wellness-grid-3 {
