@@ -1,0 +1,92 @@
+.goal-tracker-card {
+  border: 1px solid #ead8c8;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fffdfa;
+  display: grid;
+  gap: 10px;
+}
+
+.goal-tracker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.goal-tracker-header h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  color: #3a2b22;
+}
+
+.goal-tracker-header p {
+  margin: 2px 0 0;
+  font-size: 0.88rem;
+  color: #7b6c62;
+}
+
+.goal-delete-btn {
+  border: 1px solid #dfb79b;
+  border-radius: 999px;
+  background: #fff;
+  color: #713113;
+  padding: 8px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.goal-days-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px;
+}
+
+.goal-day-btn {
+  border: 1px solid #dfd2c8;
+  border-radius: 9px;
+  background: #fff;
+  color: #5b4b41;
+  padding: 8px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.goal-day-btn.is-complete {
+  border-color: #2e7d32;
+  background: #ecf8ed;
+  color: #1b5e20;
+}
+
+.goal-tracker-footer {
+  display: grid;
+  gap: 3px;
+}
+
+.goal-tracker-footer p {
+  margin: 0;
+  color: #6a5e55;
+  font-size: 0.9rem;
+}
+
+.checklist-card {
+  gap: 12px;
+}
+
+.goal-checklist-toggle {
+  justify-self: start;
+  border: 1px solid #d9bea4;
+  border-radius: 999px;
+  background: #fff;
+  color: #65371b;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.goal-checklist-toggle.is-complete {
+  border-color: #2e7d32;
+  background: #ecf8ed;
+  color: #1b5e20;
+}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { getActiveUsername } from "../utils/activeUsername";
 
-const CURRENT_USERNAME = "campbell.lowe";
 const OVULATION_SIGNAL_DELTA = 0.2;
 const LH_POSITIVE_THRESHOLD = 1;
 
@@ -97,6 +97,13 @@ function normalizeCmType(value) {
     .toLowerCase();
 }
 
+function normalizeOvulationTest(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+}
+
 function getCombinedTemperature(entry) {
   if (entry?.sick === true) {
     return null;
@@ -136,13 +143,17 @@ function addScoreReason(day, code, label, points) {
   day.score += points;
 }
 
-function estimateOvulationForCycle(entries) {
+function estimateOvulationForCycle(entries, options = {}) {
+  const cycleEnded = options.cycleEnded === true;
+
   if (!Array.isArray(entries) || entries.length === 0) {
     return {
       estimatedOvulationDate: null,
       estimatedOvulationCycleDay: null,
       estimatedOvulationScore: 0,
       estimatedOvulationConfidence: "Low",
+      estimatedIsAnovulatory: false,
+      estimatedIsPending: true,
       estimatedOvulationReasons: [],
       estimatedOvulationTopCandidates: [],
       estimatedBaseline: null,
@@ -221,7 +232,14 @@ function estimateOvulationForCycle(entries) {
   const peakLhDayIndex =
     cycleLhMax === null
       ? -1
-      : days.findIndex((day) => day.lhMax !== null && day.lhMax === cycleLhMax);
+      : days.findIndex((day) => {
+          const ovulationTest = normalizeOvulationTest(entries[day.index]?.ovulationTest);
+          return (
+            day.lhMax !== null &&
+            day.lhMax === cycleLhMax &&
+            ovulationTest === "negative-high"
+          );
+        });
 
   if (firstPositiveLhDayIndex >= 0 || peakLhDayIndex >= 0) {
     days.forEach((day) => {
@@ -348,6 +366,19 @@ function estimateOvulationForCycle(entries) {
 
   const estimatedScore = winningDay?.score ?? 0;
 
+  const hasConfirmedOvulation = entries.some((entry) => entry?.ovulationConfirmed === true);
+  const hasPositiveLh = days.some(
+    (day) => day.lhMax !== null && day.lhMax >= LH_POSITIVE_THRESHOLD
+  );
+  const hasNegativeHighLh = days.some((day) => day.lhMax !== null && day.lhMax >= 0.6);
+  const hasTempRiseSignal = riseStartEntryIndex !== null;
+
+  const hasNoClearOvulationSignal =
+    !hasConfirmedOvulation &&
+    !hasPositiveLh &&
+    !hasNegativeHighLh &&
+    !hasTempRiseSignal;
+
   const estimatedOvulationReasons = winningDay
     ? Object.values(winningDay.reasonMap)
         .filter((reason) => reason.points > 0)
@@ -380,11 +411,57 @@ function estimateOvulationForCycle(entries) {
     })
     .slice(0, 5);
 
+  if (hasNoClearOvulationSignal && cycleEnded) {
+    return {
+      estimatedOvulationDate: null,
+      estimatedOvulationCycleDay: null,
+      estimatedOvulationScore: estimatedScore,
+      estimatedOvulationConfidence: "Anovulatory",
+      estimatedIsAnovulatory: true,
+      estimatedIsPending: false,
+      estimatedOvulationReasons: [
+        {
+          code: "likely-anovulatory",
+          label: "No clear ovulation signal: LH stayed low and no sustained temperature-rise pattern was detected",
+          points: 0,
+        },
+      ],
+      estimatedOvulationTopCandidates: [],
+      estimatedBaseline: baselineResult.baseline,
+      estimatedBaselineIsEstimated: baselineResult.isEstimated,
+      estimatedCycleLhPeak: cycleLhMax,
+    };
+  }
+
+  if (hasNoClearOvulationSignal && !cycleEnded) {
+    return {
+      estimatedOvulationDate: null,
+      estimatedOvulationCycleDay: null,
+      estimatedOvulationScore: estimatedScore,
+      estimatedOvulationConfidence: "Pending",
+      estimatedIsAnovulatory: false,
+      estimatedIsPending: true,
+      estimatedOvulationReasons: [
+        {
+          code: "pending-signal",
+          label: "Cycle is still in progress and ovulation signals are not strong yet",
+          points: 0,
+        },
+      ],
+      estimatedOvulationTopCandidates: [],
+      estimatedBaseline: baselineResult.baseline,
+      estimatedBaselineIsEstimated: baselineResult.isEstimated,
+      estimatedCycleLhPeak: cycleLhMax,
+    };
+  }
+
   return {
     estimatedOvulationDate: winningDay?.date || null,
     estimatedOvulationCycleDay: winningDay?.cycleDay ?? null,
     estimatedOvulationScore: estimatedScore,
     estimatedOvulationConfidence: getOvulationConfidence(estimatedScore),
+    estimatedIsAnovulatory: false,
+    estimatedIsPending: false,
     estimatedOvulationReasons,
     estimatedOvulationTopCandidates,
     estimatedBaseline: baselineResult.baseline,
@@ -459,6 +536,395 @@ function buildCycleWindows(entries) {
       length: entriesInWindow.length,
     };
   });
+}
+
+function buildConsecutivePointSegments(points) {
+  if (!Array.isArray(points) || points.length === 0) {
+    return [];
+  }
+
+  const segments = [];
+  let currentSegment = [points[0]];
+
+  for (let index = 1; index < points.length; index += 1) {
+    const previousPoint = points[index - 1];
+    const currentPoint = points[index];
+
+    if (currentPoint.index === previousPoint.index + 1) {
+      currentSegment.push(currentPoint);
+      continue;
+    }
+
+    if (currentSegment.length > 0) {
+      segments.push(currentSegment);
+    }
+
+    currentSegment = [currentPoint];
+  }
+
+  if (currentSegment.length > 0) {
+    segments.push(currentSegment);
+  }
+
+  return segments;
+}
+
+function addDaysToIsoDate(dateString, days) {
+  if (!dateString) {
+    return null;
+  }
+
+  const date = new Date(`${dateString}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toCycleDay(value, fallback) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return Math.floor(numeric);
+  }
+
+  return fallback;
+}
+
+function getSurgeCycleDay(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return null;
+  }
+
+  const firstPositiveIndex = entries.findIndex((entry) => {
+    const lhMax = getDailyLhMax(entry);
+    const ovulationTest = normalizeOvulationTest(entry?.ovulationTest);
+    return (lhMax !== null && lhMax >= LH_POSITIVE_THRESHOLD) || ovulationTest === "positive";
+  });
+
+  if (firstPositiveIndex >= 0) {
+    return toCycleDay(entries[firstPositiveIndex]?.cycleDay, firstPositiveIndex + 1);
+  }
+
+  const peakNegativeHighIndex = entries.findIndex(
+    (entry) =>
+      entry?.peak === true && normalizeOvulationTest(entry?.ovulationTest) === "negative-high"
+  );
+
+  if (peakNegativeHighIndex >= 0) {
+    return toCycleDay(entries[peakNegativeHighIndex]?.cycleDay, peakNegativeHighIndex + 1);
+  }
+
+  return null;
+}
+
+function getOvulationCycleDay(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return null;
+  }
+
+  const firstConfirmed = entries.find((entry) => entry?.ovulationConfirmed === true);
+  if (firstConfirmed) {
+    return toCycleDay(firstConfirmed.cycleDay, entries.indexOf(firstConfirmed) + 1);
+  }
+
+  const estimate = estimateOvulationForCycle(entries, { cycleEnded: true });
+  if (estimate.estimatedIsAnovulatory || estimate.estimatedIsPending) {
+    return null;
+  }
+
+  if (estimate.estimatedOvulationCycleDay !== null && estimate.estimatedOvulationCycleDay !== undefined) {
+    return toCycleDay(estimate.estimatedOvulationCycleDay, null);
+  }
+
+  const estimatedIndex = entries.findIndex((entry) => entry?.date === estimate.estimatedOvulationDate);
+  if (estimatedIndex >= 0) {
+    return toCycleDay(entries[estimatedIndex]?.cycleDay, estimatedIndex + 1);
+  }
+
+  return null;
+}
+
+function standardDeviation(values, mean) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return null;
+  }
+
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function buildHistoricalPrediction(previousCycles) {
+  if (!Array.isArray(previousCycles) || previousCycles.length === 0) {
+    return {
+      sampleCount: 0,
+      cycleSamples: [],
+      predictedSurgeCycleDay: null,
+      predictedOvulationCycleDay: null,
+      surgeWindow: null,
+      ovulationWindow: null,
+    };
+  }
+
+  const cycleSamples = previousCycles
+    .map((cycle) => {
+      const surgeCycleDay = getSurgeCycleDay(cycle.entries);
+      const ovulationCycleDay = getOvulationCycleDay(cycle.entries);
+
+      if (surgeCycleDay === null && ovulationCycleDay === null) {
+        return null;
+      }
+
+      return {
+        cycleStartDate: cycle.startDate,
+        cycleEndDate: cycle.endDate,
+        surgeCycleDay,
+        ovulationCycleDay,
+      };
+    })
+    .filter(Boolean);
+
+  const surgeValues = cycleSamples
+    .map((sample) => sample.surgeCycleDay)
+    .filter((value) => value !== null);
+  const ovulationValues = cycleSamples
+    .map((sample) => sample.ovulationCycleDay)
+    .filter((value) => value !== null);
+
+  const surgeMean = surgeValues.length > 0 ? average(surgeValues) : null;
+  const ovulationMean = ovulationValues.length > 0 ? average(ovulationValues) : null;
+
+  const predictedSurgeCycleDay = surgeMean === null ? null : Math.max(1, Math.round(surgeMean));
+  const predictedOvulationCycleDay =
+    ovulationMean === null ? null : Math.max(1, Math.round(ovulationMean));
+
+  const surgeStd = surgeMean === null ? null : standardDeviation(surgeValues, surgeMean);
+  const ovulationStd = ovulationMean === null ? null : standardDeviation(ovulationValues, ovulationMean);
+
+  const surgeWindow =
+    predictedSurgeCycleDay === null
+      ? null
+      : {
+          start: Math.max(1, Math.floor(predictedSurgeCycleDay - Math.max(1, Math.round(surgeStd ?? 1)))),
+          end: Math.max(1, Math.ceil(predictedSurgeCycleDay + Math.max(1, Math.round(surgeStd ?? 1)))),
+        };
+
+  const ovulationWindow =
+    predictedOvulationCycleDay === null
+      ? null
+      : {
+          start: Math.max(1, Math.floor(predictedOvulationCycleDay - Math.max(1, Math.round(ovulationStd ?? 1)))),
+          end: Math.max(1, Math.ceil(predictedOvulationCycleDay + Math.max(1, Math.round(ovulationStd ?? 1)))),
+        };
+
+  return {
+    sampleCount: cycleSamples.length,
+    cycleSamples,
+    predictedSurgeCycleDay,
+    predictedOvulationCycleDay,
+    surgeWindow,
+    ovulationWindow,
+  };
+}
+
+function HistoricalPredictionChart({ selectedCycle, prediction }) {
+  const width = 760;
+  const rowHeight = 28;
+  const topMargin = 36;
+  const bottomMargin = 30;
+  const leftMargin = 88;
+  const rightMargin = 20;
+
+  const rows = prediction.cycleSamples || [];
+  const chartHeight = topMargin + bottomMargin + Math.max(rows.length, 1) * rowHeight;
+
+  const dayCeiling = Math.max(
+    35,
+    ...rows.flatMap((sample) => [sample.surgeCycleDay || 0, sample.ovulationCycleDay || 0]),
+    prediction.predictedSurgeCycleDay || 0,
+    prediction.predictedOvulationCycleDay || 0
+  );
+
+  const xForDay = (cycleDay) => {
+    const clamped = Math.max(1, Math.min(dayCeiling, cycleDay));
+    const ratio = (clamped - 1) / Math.max(dayCeiling - 1, 1);
+    return leftMargin + ratio * (width - leftMargin - rightMargin);
+  };
+
+  const predictedSurgeDate =
+    selectedCycle && prediction.predictedSurgeCycleDay !== null
+      ? addDaysToIsoDate(selectedCycle.startDate, prediction.predictedSurgeCycleDay - 1)
+      : null;
+
+  const predictedOvulationDate =
+    selectedCycle && prediction.predictedOvulationCycleDay !== null
+      ? addDaysToIsoDate(selectedCycle.startDate, prediction.predictedOvulationCycleDay - 1)
+      : null;
+
+  return (
+    <section
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "10px",
+        padding: "20px",
+        display: "grid",
+        gap: "10px",
+      }}
+    >
+      <h2 style={{ margin: 0 }}>Predicted Surge & Ovulation</h2>
+
+      <p style={{ margin: 0, color: "#555" }}>
+        Uses previous completed cycles to estimate timing for this selected cycle.
+      </p>
+
+      {prediction.sampleCount === 0 ? (
+        <p style={{ margin: 0, color: "#666" }}>
+          Not enough previous cycle data yet. Log at least one earlier cycle with LH and/or ovulation signals.
+        </p>
+      ) : (
+        <>
+          <p style={{ margin: 0, color: "#333" }}>
+            Predicted LH surge: {prediction.predictedSurgeCycleDay ? `CD ${prediction.predictedSurgeCycleDay}` : "Not enough data"}
+            {predictedSurgeDate ? ` (${predictedSurgeDate})` : ""}
+            {prediction.surgeWindow ? ` | window CD ${prediction.surgeWindow.start}-${prediction.surgeWindow.end}` : ""}
+          </p>
+
+          <p style={{ margin: 0, color: "#333" }}>
+            Predicted ovulation: {prediction.predictedOvulationCycleDay ? `CD ${prediction.predictedOvulationCycleDay}` : "Not enough data"}
+            {predictedOvulationDate ? ` (${predictedOvulationDate})` : ""}
+            {prediction.ovulationWindow ? ` | window CD ${prediction.ovulationWindow.start}-${prediction.ovulationWindow.end}` : ""}
+          </p>
+
+          <svg
+            viewBox={`0 0 ${width} ${chartHeight}`}
+            role="img"
+            aria-label="Historical ovulation timing chart"
+            style={{
+              width: "100%",
+              maxWidth: `${width}px`,
+              background: "#fff",
+              borderRadius: "8px",
+              border: "1px solid #eee",
+            }}
+          >
+            <line
+              x1={leftMargin}
+              y1={topMargin - 12}
+              x2={width - rightMargin}
+              y2={topMargin - 12}
+              stroke="#d8d8d8"
+              strokeWidth="1"
+            />
+
+            {prediction.surgeWindow ? (
+              <rect
+                x={xForDay(prediction.surgeWindow.start)}
+                y={topMargin - 16}
+                width={Math.max(2, xForDay(prediction.surgeWindow.end) - xForDay(prediction.surgeWindow.start))}
+                height={chartHeight - topMargin - bottomMargin + 10}
+                fill="#fff3e0"
+                opacity="0.55"
+              />
+            ) : null}
+
+            {prediction.ovulationWindow ? (
+              <rect
+                x={xForDay(prediction.ovulationWindow.start)}
+                y={topMargin - 16}
+                width={Math.max(2, xForDay(prediction.ovulationWindow.end) - xForDay(prediction.ovulationWindow.start))}
+                height={chartHeight - topMargin - bottomMargin + 10}
+                fill="#e8f2ff"
+                opacity="0.5"
+              />
+            ) : null}
+
+            {rows.map((sample, index) => {
+              const y = topMargin + index * rowHeight;
+              return (
+                <g key={`${sample.cycleStartDate}-${index}`}>
+                  <line
+                    x1={leftMargin}
+                    y1={y}
+                    x2={width - rightMargin}
+                    y2={y}
+                    stroke="#f1f1f1"
+                    strokeWidth="1"
+                  />
+                  <text x={8} y={y + 4} fill="#666" fontSize="10" textAnchor="start">
+                    {sample.cycleStartDate}
+                  </text>
+
+                  {sample.surgeCycleDay !== null ? (
+                    <polygon
+                      points={`${xForDay(sample.surgeCycleDay)},${y - 7} ${xForDay(sample.surgeCycleDay) - 6},${y + 5} ${xForDay(sample.surgeCycleDay) + 6},${y + 5}`}
+                      fill="#ef6c00"
+                    />
+                  ) : null}
+
+                  {sample.ovulationCycleDay !== null ? (
+                    <circle cx={xForDay(sample.ovulationCycleDay)} cy={y} r="5" fill="#1565c0" />
+                  ) : null}
+                </g>
+              );
+            })}
+
+            {Array.from({ length: 8 }, (_, idx) => {
+              const cycleDay = Math.max(1, Math.round(1 + (idx * (dayCeiling - 1)) / 7));
+              return (
+                <g key={`tick-${cycleDay}-${idx}`}>
+                  <line
+                    x1={xForDay(cycleDay)}
+                    y1={chartHeight - bottomMargin + 2}
+                    x2={xForDay(cycleDay)}
+                    y2={chartHeight - bottomMargin + 6}
+                    stroke="#8c8c8c"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={xForDay(cycleDay)}
+                    y={chartHeight - 8}
+                    fill="#666"
+                    fontSize="10"
+                    textAnchor="middle"
+                  >
+                    {cycleDay}
+                  </text>
+                </g>
+              );
+            })}
+          </svg>
+
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", color: "#555", fontSize: "0.88rem" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  width: "0",
+                  height: "0",
+                  borderLeft: "6px solid transparent",
+                  borderRight: "6px solid transparent",
+                  borderBottom: "12px solid #ef6c00",
+                }}
+              />
+              Historical LH Surge Day
+            </span>
+
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+              <span
+                aria-hidden="true"
+                style={{ width: "10px", height: "10px", borderRadius: "999px", background: "#1565c0" }}
+              />
+              Historical Ovulation Day
+            </span>
+          </div>
+        </>
+      )}
+    </section>
+  );
 }
 
 function SimpleLineChart({
@@ -702,18 +1168,21 @@ function SimpleLineChart({
               return null;
             }
 
-            const polylinePoints = item.points
-              .map((point) => `${xForIndex(point.index)},${yForValue(point.value)}`)
-              .join(" ");
+            const pointSegments = buildConsecutivePointSegments(item.points);
 
             return (
               <g key={item.key}>
-                <polyline
-                  fill="none"
-                  stroke={item.color}
-                  strokeWidth="2.5"
-                  points={polylinePoints}
-                />
+                {pointSegments.map((segment, segmentIndex) => (
+                  <polyline
+                    key={`${item.key}-segment-${segmentIndex}`}
+                    fill="none"
+                    stroke={item.color}
+                    strokeWidth="2.5"
+                    points={segment
+                      .map((point) => `${xForIndex(point.index)},${yForValue(point.value)}`)
+                      .join(" ")}
+                  />
+                ))}
 
                 {item.points.map((point) => (
                   <circle
@@ -1794,7 +2263,13 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
   );
 }
 
-function UnprotectedSexTimelineChart({ entries, estimatedOvulationDate = null }) {
+function UnprotectedSexTimelineChart({
+  entries,
+  estimatedOvulationDate = null,
+  estimatedIsAnovulatory = false,
+  onOpenDueDateEstimator = null,
+  cycleStartDate = "",
+}) {
   const width = 760;
   const height = 250;
   const margin = 92;
@@ -1868,12 +2343,19 @@ function UnprotectedSexTimelineChart({ entries, estimatedOvulationDate = null })
       date: entry.date,
       cycleDay: entry.cycleDay,
       peak: entry.peak,
+      ovulationTest: entry.ovulationTest,
     }))
-    .filter((point) => point.peak === true);
+    .filter(
+      (point) =>
+        point.peak === true && normalizeOvulationTest(point.ovulationTest) === "negative-high"
+    );
 
   const ovulationIndices = ovulationPoints.map((point) => point.index);
   const estimatedIndices = estimatedOvulationPoint ? [estimatedOvulationPoint.index] : [];
   const peakIndices = peakPoints.map((point) => point.index);
+  const confirmedOvulationDates = ovulationPoints
+    .map((point) => point.date)
+    .filter(Boolean);
 
   const eventPointsWithChance = eventPoints.map((point) => ({
     ...point,
@@ -2204,6 +2686,34 @@ function UnprotectedSexTimelineChart({ entries, estimatedOvulationDate = null })
         Disclaimer: Estimated only on the data you entered.
       </p>
 
+      <button
+        type="button"
+        onClick={() => {
+          if (typeof onOpenDueDateEstimator === "function") {
+            onOpenDueDateEstimator({
+              cycleStartDate,
+              estimatedOvulationDate,
+              confirmedOvulationDates,
+              estimatedIsAnovulatory,
+            });
+          }
+        }}
+        style={{
+          marginTop: "10px",
+          justifySelf: "start",
+          border: "none",
+          background: "transparent",
+          color: "#0b57d0",
+          textDecoration: "underline",
+          cursor: "pointer",
+          padding: 0,
+          font: "inherit",
+          fontWeight: 600,
+        }}
+      >
+        View Due Date Estimate for This Cycle
+      </button>
+
       <div
         style={{
           marginTop: "10px",
@@ -2305,7 +2815,7 @@ function UnprotectedSexTimelineChart({ entries, estimatedOvulationDate = null })
   );
 }
 
-function CycleDashboard() {
+function CycleDashboard({ onOpenDueDateEstimator = null, onOpenPhaseGuide = null }) {
   const [entries, setEntries] = useState([]);
   const [selectedCycleStartDate, setSelectedCycleStartDate] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -2314,13 +2824,15 @@ function CycleDashboard() {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
 
   useEffect(() => {
+    const currentUsername = getActiveUsername();
+
     async function loadEntries() {
       try {
         setIsLoading(true);
         setErrorMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(CURRENT_USERNAME)}`
+          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
         );
 
         if (!response.ok) {
@@ -2364,11 +2876,33 @@ function CycleDashboard() {
     [cycleWindows, selectedCycleStartDate]
   );
 
+  const selectedCycleIndex = useMemo(
+    () => cycleWindows.findIndex((cycle) => cycle.startDate === selectedCycleStartDate),
+    [cycleWindows, selectedCycleStartDate]
+  );
+
+  const selectedCycleHasEnded =
+    selectedCycleIndex >= 0 && selectedCycleIndex < cycleWindows.length - 1;
+
+  const previousCompletedCycles = useMemo(() => {
+    if (selectedCycleIndex <= 0) {
+      return [];
+    }
+
+    return cycleWindows.slice(0, selectedCycleIndex);
+  }, [cycleWindows, selectedCycleIndex]);
+
   const selectedEntries = selectedCycle?.entries || [];
+  const currentCycleEntry = selectedEntries.length > 0 ? selectedEntries[selectedEntries.length - 1] : null;
 
   const estimatedOvulation = useMemo(
-    () => estimateOvulationForCycle(selectedEntries),
-    [selectedEntries]
+    () => estimateOvulationForCycle(selectedEntries, { cycleEnded: selectedCycleHasEnded }),
+    [selectedEntries, selectedCycleHasEnded]
+  );
+
+  const historicalPrediction = useMemo(
+    () => buildHistoricalPrediction(previousCompletedCycles),
+    [previousCompletedCycles]
   );
 
   const confirmedOvulationDates = useMemo(
@@ -2474,8 +3008,18 @@ function CycleDashboard() {
         <h2 style={{ margin: 0 }}>Ovulation Status</h2>
 
         <p style={{ margin: 0, color: "#444" }}>
-          Estimated Ovulation (calculated): {estimatedOvulation.estimatedOvulationDate || "Not enough data"}
-          {estimatedOvulation.estimatedOvulationCycleDay ? ` (CD ${estimatedOvulation.estimatedOvulationCycleDay})` : ""}
+          Estimated Ovulation (calculated): {estimatedOvulation.estimatedIsAnovulatory
+            ? "Likely anovulatory in this cycle"
+            : estimatedOvulation.estimatedIsPending
+              ? "Too early to call in this cycle"
+              : estimatedOvulation.estimatedOvulationDate || "Not enough data"}
+          {estimatedOvulation.estimatedIsAnovulatory
+            ? ""
+            : estimatedOvulation.estimatedIsPending
+              ? ""
+            : estimatedOvulation.estimatedOvulationCycleDay
+              ? ` (CD ${estimatedOvulation.estimatedOvulationCycleDay})`
+              : ""}
         </p>
 
         <button
@@ -2503,6 +3047,45 @@ function CycleDashboard() {
           Confirmed Ovulation (manual): {confirmedOvulationDates.length > 0 ? confirmedOvulationDates.join(", ") : "None marked"}
         </p>
 
+        <button
+          type="button"
+          onClick={() => {
+            if (typeof onOpenPhaseGuide === "function") {
+              onOpenPhaseGuide({
+                cycleStartDate: selectedCycle?.startDate || "",
+                cycleEndDate: selectedCycle?.endDate || "",
+                currentEntry: currentCycleEntry
+                  ? {
+                      date: currentCycleEntry.date || "",
+                      cycleDay: currentCycleEntry.cycleDay,
+                      period: currentCycleEntry.period,
+                      bleeding: currentCycleEntry.bleeding,
+                    }
+                  : null,
+                confirmedOvulationDates,
+                estimatedOvulationDate: estimatedOvulation.estimatedOvulationDate,
+                estimatedIsAnovulatory: estimatedOvulation.estimatedIsAnovulatory,
+              });
+            }
+          }}
+          style={{
+            margin: 0,
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            color: "#0b57d0",
+            textAlign: "left",
+            cursor: "pointer",
+            fontSize: "1rem",
+            fontFamily: "inherit",
+            justifySelf: "start",
+            textDecoration: "underline",
+            fontWeight: 600,
+          }}
+        >
+          View Current Phase Guide
+        </button>
+
         {estimatedDiffersFromConfirmed ? (
           <p style={{ margin: 0, color: "#9a3f00", fontWeight: 600 }}>
             Estimated and confirmed ovulation differ in this cycle. Both markers are shown on graphs.
@@ -2523,9 +3106,19 @@ function CycleDashboard() {
           >
             <h3 style={{ margin: 0, fontSize: "1rem" }}>Why This Score Was Given</h3>
 
-            <p style={{ margin: 0, color: "#444" }}>
-              Confidence is based on score: High (10+), Medium (7-9), Low (&lt;7).
-            </p>
+            {estimatedOvulation.estimatedIsAnovulatory ? (
+              <p style={{ margin: 0, color: "#444" }}>
+                This cycle is marked likely anovulatory because no clear ovulation signals were found.
+              </p>
+            ) : estimatedOvulation.estimatedIsPending ? (
+              <p style={{ margin: 0, color: "#444" }}>
+                This cycle is still in progress, so ovulation is currently marked as pending until stronger signals appear.
+              </p>
+            ) : (
+              <p style={{ margin: 0, color: "#444" }}>
+                Confidence is based on score: High (10+), Medium (7-9), Low (&lt;7).
+              </p>
+            )}
 
             <p style={{ margin: 0, color: "#555", fontSize: "0.9rem" }}>
               Baseline used: {estimatedOvulation.estimatedBaseline !== null ? estimatedOvulation.estimatedBaseline.toFixed(2) : "Not available"}
@@ -2651,6 +3244,11 @@ function CycleDashboard() {
         ) : null}
       </section>
 
+      <HistoricalPredictionChart
+        selectedCycle={selectedCycle}
+        prediction={historicalPrediction}
+      />
+
       <TemperatureSection
         entries={selectedEntries}
         estimatedOvulationDate={estimatedOvulation.estimatedOvulationDate}
@@ -2664,8 +3262,420 @@ function CycleDashboard() {
       <UnprotectedSexTimelineChart
         entries={selectedEntries}
         estimatedOvulationDate={estimatedOvulation.estimatedOvulationDate}
+        estimatedIsAnovulatory={estimatedOvulation.estimatedIsAnovulatory}
+        onOpenDueDateEstimator={onOpenDueDateEstimator}
+        cycleStartDate={selectedCycle?.startDate || ""}
       />
 
+    </div>
+  );
+}
+
+export function AllCyclesChartsPage() {
+  const [entries, setEntries] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const currentUsername = getActiveUsername();
+
+    async function loadEntries() {
+      try {
+        setIsLoading(true);
+        setErrorMessage("");
+
+        const response = await fetch(
+          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+        );
+
+        if (!response.ok) {
+          throw new Error(`Could not load cycle data (${response.status}).`);
+        }
+
+        const data = await response.json();
+        const sorted = [...data].sort((a, b) => (a.date > b.date ? 1 : -1));
+        setEntries(sorted);
+      } catch (error) {
+        console.error(error);
+        setErrorMessage(error.message || "Could not load cycle data.");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadEntries();
+  }, []);
+
+  const cycleWindows = useMemo(() => buildCycleWindows(entries), [entries]);
+  const estimatedOvulationDateSet = useMemo(() => {
+    const dates = cycleWindows
+      .map((cycle, index) => {
+        const cycleEnded = index < cycleWindows.length - 1;
+        const estimate = estimateOvulationForCycle(cycle.entries, { cycleEnded });
+        return estimate.estimatedOvulationDate || null;
+      })
+      .filter(Boolean);
+
+    return new Set(dates);
+  }, [cycleWindows]);
+
+  const confirmedOvulationDateSet = useMemo(
+    () =>
+      new Set(
+        entries
+          .filter((entry) => entry.ovulationConfirmed === true && entry.date)
+          .map((entry) => entry.date)
+      ),
+    [entries]
+  );
+
+  const cycleStartDateSet = useMemo(
+    () => new Set(cycleWindows.map((cycle) => cycle.startDate).filter(Boolean)),
+    [cycleWindows]
+  );
+
+  if (isLoading) {
+    return <p>Loading all cycles...</p>;
+  }
+
+  if (errorMessage) {
+    return <p>Could not load all cycles: {errorMessage}</p>;
+  }
+
+  if (cycleWindows.length === 0) {
+    return <p>No cycle starts found yet. Set at least one entry to cycle day 1.</p>;
+  }
+
+  const chartPaddingLeft = 70;
+  const chartPaddingRight = 40;
+  const pointSpacing = 26;
+  const chartWidth = Math.max(1200, chartPaddingLeft + chartPaddingRight + Math.max(entries.length - 1, 1) * pointSpacing);
+  const chartHeight = 620;
+
+  const thermometerLaneTop = 45;
+  const thermometerLaneBottom = 165;
+  const watchLaneTop = 200;
+  const watchLaneBottom = 320;
+  const lhLaneTop = 355;
+  const lhLaneBottom = 485;
+  const eventLaneY = 550;
+
+  const xForIndex = (index) => chartPaddingLeft + index * pointSpacing;
+
+  const thermometerPoints = entries
+    .map((entry, index) => ({
+      index,
+      value: toPlottableNumber(entry.thermometerTemp, { excludeZero: true }),
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+    }))
+    .filter((point) => point.value !== null);
+
+  const watchPoints = entries
+    .map((entry, index) => ({
+      index,
+      value: toPlottableNumber(entry.wristTemp, { excludeZero: true }),
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+    }))
+    .filter((point) => point.value !== null);
+
+  const thermometerSegments = buildConsecutivePointSegments(thermometerPoints);
+  const watchSegments = buildConsecutivePointSegments(watchPoints);
+
+  const thermometerValues = thermometerPoints.map((point) => point.value);
+  const hasThermometerData = thermometerValues.length > 0;
+  const minThermometer = hasThermometerData ? Math.min(...thermometerValues) : 0;
+  const maxThermometer = hasThermometerData ? Math.max(...thermometerValues) : 1;
+  const adjustedMinThermometer =
+    hasThermometerData && minThermometer === maxThermometer ? minThermometer - 0.3 : minThermometer;
+  const adjustedMaxThermometer =
+    hasThermometerData && minThermometer === maxThermometer ? maxThermometer + 0.3 : maxThermometer;
+
+  const watchValues = watchPoints.map((point) => point.value);
+  const hasWatchData = watchValues.length > 0;
+  const minWatch = hasWatchData ? Math.min(...watchValues) : 0;
+  const maxWatch = hasWatchData ? Math.max(...watchValues) : 1;
+  const adjustedMinWatch = hasWatchData && minWatch === maxWatch ? minWatch - 0.3 : minWatch;
+  const adjustedMaxWatch = hasWatchData && minWatch === maxWatch ? maxWatch + 0.3 : maxWatch;
+
+  const yForThermometer = (value) => {
+    if (!hasThermometerData) {
+      return (thermometerLaneTop + thermometerLaneBottom) / 2;
+    }
+
+    return (
+      thermometerLaneTop +
+      ((adjustedMaxThermometer - value) / (adjustedMaxThermometer - adjustedMinThermometer)) *
+        (thermometerLaneBottom - thermometerLaneTop)
+    );
+  };
+
+  const yForWatch = (value) => {
+    if (!hasWatchData) {
+      return (watchLaneTop + watchLaneBottom) / 2;
+    }
+
+    return (
+      watchLaneTop +
+      ((adjustedMaxWatch - value) / (adjustedMaxWatch - adjustedMinWatch)) *
+        (watchLaneBottom - watchLaneTop)
+    );
+  };
+
+  const dailyLhPoints = entries
+    .map((entry, index) => ({
+      index,
+      value: getDailyLhMax(entry),
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      confirmed: Boolean(entry.date && confirmedOvulationDateSet.has(entry.date)),
+      estimated: Boolean(entry.date && estimatedOvulationDateSet.has(entry.date)),
+    }))
+    .filter((point) => point.value !== null);
+
+  const lhValues = dailyLhPoints.map((point) => point.value);
+  const hasLhData = lhValues.length > 0;
+  const maxLh = hasLhData ? Math.max(...lhValues, 1) : 1;
+
+  const yForLh = (value) => {
+    return lhLaneBottom - (value / Math.max(maxLh, 1)) * (lhLaneBottom - lhLaneTop);
+  };
+
+  const unprotectedPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      isUnprotected:
+        entry.intercourse === true &&
+        (entry.usedProtection === false || String(entry.protectionType || "").toLowerCase() === "none"),
+    }))
+    .filter((point) => point.isUnprotected);
+
+  return (
+    <div
+      style={{
+        maxWidth: "1180px",
+        margin: "0 auto",
+        padding: "20px",
+        display: "grid",
+        gap: "16px",
+      }}
+    >
+      <h1 style={{ marginBottom: 0 }}>All Cycles In One Chart</h1>
+
+      <p style={{ margin: 0, color: "#555" }}>
+        One combined timeline for all historical entries. Scroll sideways to review across all time.
+      </p>
+
+      <div
+        style={{
+          overflowX: "auto",
+          overflowY: "hidden",
+          border: "1px solid #ddd",
+          borderRadius: "10px",
+          background: "#fff",
+          padding: "10px",
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+          role="img"
+          aria-label="All cycles combined chart"
+          style={{ width: `${chartWidth}px`, height: `${chartHeight}px`, display: "block" }}
+        >
+          <text x="8" y={thermometerLaneTop + 10} fill="#333" fontSize="11" fontWeight="700">
+            Thermometer
+          </text>
+          <text x="8" y={watchLaneTop + 10} fill="#333" fontSize="11" fontWeight="700">
+            Apple Watch
+          </text>
+          <text x="8" y={lhLaneTop + 10} fill="#333" fontSize="11" fontWeight="700">
+            LH Max
+          </text>
+          <text x="8" y={eventLaneY + 4} fill="#333" fontSize="11" fontWeight="700">
+            Unprotected
+          </text>
+
+          <line x1={chartPaddingLeft} y1={thermometerLaneBottom} x2={chartWidth - chartPaddingRight} y2={thermometerLaneBottom} stroke="#dedede" strokeWidth="1" />
+          <line x1={chartPaddingLeft} y1={watchLaneBottom} x2={chartWidth - chartPaddingRight} y2={watchLaneBottom} stroke="#dedede" strokeWidth="1" />
+          <line x1={chartPaddingLeft} y1={lhLaneBottom} x2={chartWidth - chartPaddingRight} y2={lhLaneBottom} stroke="#dedede" strokeWidth="1" />
+          <line x1={chartPaddingLeft} y1={eventLaneY} x2={chartWidth - chartPaddingRight} y2={eventLaneY} stroke="#dedede" strokeWidth="1" />
+
+          {entries.map((entry, index) => {
+            const isCycleStart = entry.date && cycleStartDateSet.has(entry.date);
+            const isConfirmed = entry.date && confirmedOvulationDateSet.has(entry.date);
+            const isEstimated = entry.date && estimatedOvulationDateSet.has(entry.date);
+
+            if (!isCycleStart && !isConfirmed && !isEstimated) {
+              return null;
+            }
+
+            const x = xForIndex(index);
+            return (
+              <g key={`markers-${entry.date || index}`}>
+                {isCycleStart ? (
+                  <line
+                    x1={x}
+                    y1={22}
+                    x2={x}
+                    y2={eventLaneY + 24}
+                    stroke="#bdbdbd"
+                    strokeWidth="1"
+                    strokeDasharray="3 3"
+                    opacity="0.9"
+                  />
+                ) : null}
+
+                {isConfirmed ? (
+                  <line x1={x} y1={thermometerLaneTop} x2={x} y2={eventLaneY + 8} stroke="#c62828" strokeWidth="1.8" opacity="0.95" />
+                ) : null}
+
+                {isEstimated ? (
+                  <line x1={x} y1={thermometerLaneTop} x2={x} y2={eventLaneY + 8} stroke="#ef6c00" strokeWidth="1.6" strokeDasharray="5 4" opacity="0.95" />
+                ) : null}
+              </g>
+            );
+          })}
+
+          {hasThermometerData
+            ? thermometerSegments.map((segment, segmentIndex) => (
+                <polyline
+                  key={`thermometer-segment-${segmentIndex}`}
+                  fill="none"
+                  stroke="#ff5d57"
+                  strokeWidth="2.2"
+                  points={segment
+                    .map((point) => `${xForIndex(point.index)},${yForThermometer(point.value)}`)
+                    .join(" ")}
+                />
+              ))
+            : null}
+
+          {thermometerPoints.map((point) => (
+            <circle key={`thermometer-${point.index}`} cx={xForIndex(point.index)} cy={yForThermometer(point.value)} r="3" fill="#ff5d57">
+              <title>{`Thermometer ${point.value.toFixed(2)} | ${point.date || "Unknown"} (CD ${point.cycleDay || "-"})`}</title>
+            </circle>
+          ))}
+
+          {hasWatchData
+            ? watchSegments.map((segment, segmentIndex) => (
+                <polyline
+                  key={`watch-segment-${segmentIndex}`}
+                  fill="none"
+                  stroke="#2470ff"
+                  strokeWidth="2.2"
+                  points={segment
+                    .map((point) => `${xForIndex(point.index)},${yForWatch(point.value)}`)
+                    .join(" ")}
+                />
+              ))
+            : null}
+
+          {watchPoints.map((point) => (
+            <circle key={`watch-${point.index}`} cx={xForIndex(point.index)} cy={yForWatch(point.value)} r="3" fill="#2470ff">
+              <title>{`Apple Watch ${point.value.toFixed(2)} | ${point.date || "Unknown"} (CD ${point.cycleDay || "-"})`}</title>
+            </circle>
+          ))}
+
+          {hasLhData ? (
+            <polyline
+              fill="none"
+              stroke="#7b1fa2"
+              strokeWidth="2"
+              points={dailyLhPoints.map((point) => `${xForIndex(point.index)},${yForLh(point.value)}`).join(" ")}
+            />
+          ) : null}
+
+          {dailyLhPoints.map((point) => (
+            <circle key={`lh-${point.index}`} cx={xForIndex(point.index)} cy={yForLh(point.value)} r="3.25" fill="#7b1fa2">
+              <title>{`LH ${point.value.toFixed(2)} | ${point.date || "Unknown"} (CD ${point.cycleDay || "-"})`}</title>
+            </circle>
+          ))}
+
+          <line
+            x1={chartPaddingLeft}
+            y1={yForLh(1)}
+            x2={chartWidth - chartPaddingRight}
+            y2={yForLh(1)}
+            stroke="#4f4f4f"
+            strokeWidth="1.25"
+            strokeDasharray="5 4"
+            opacity="0.8"
+          />
+          <text x={chartPaddingLeft - 8} y={yForLh(1) + 3} fill="#555" fontSize="10" textAnchor="end">
+            1.0
+          </text>
+
+          {unprotectedPoints.map((point) => (
+            <g key={`sex-${point.index}`}>
+              <line
+                x1={xForIndex(point.index)}
+                y1={eventLaneY}
+                x2={xForIndex(point.index)}
+                y2={eventLaneY - 16}
+                stroke="#b71c1c"
+                strokeWidth="1.5"
+              />
+              <circle cx={xForIndex(point.index)} cy={eventLaneY - 18} r="5" fill="#fff" stroke="#7f0000" strokeWidth="2" >
+                <title>{`Unprotected sex | ${point.date || "Unknown"} (CD ${point.cycleDay || "-"})`}</title>
+              </circle>
+            </g>
+          ))}
+
+          {entries.map((entry, index) => {
+            const shouldLabel = index % 4 === 0 || index === entries.length - 1;
+            if (!shouldLabel) {
+              return null;
+            }
+
+            return (
+              <text
+                key={`cd-${entry.date || index}`}
+                x={xForIndex(index)}
+                y={chartHeight - 12}
+                fill="#666"
+                fontSize="10"
+                textAnchor="middle"
+              >
+                {entry.cycleDay ? `CD ${entry.cycleDay}` : "CD -"}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", color: "#555", fontSize: "0.88rem" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "12px", borderTop: "2px solid #ff5d57" }} />
+          Thermometer Temperature
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "12px", borderTop: "2px solid #2470ff" }} />
+          Apple Watch Temperature
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "12px", borderTop: "2px solid #7b1fa2" }} />
+          LH Max
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "10px", height: "10px", borderRadius: "999px", border: "2px solid #7f0000", background: "#fff", boxSizing: "border-box" }} />
+          Unprotected Sex
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "14px", borderTop: "2px solid #c62828" }} />
+          Confirmed Ovulation
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "14px", borderTop: "2px dashed #ef6c00" }} />
+          Estimated Ovulation
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span aria-hidden="true" style={{ width: "14px", borderTop: "1px dashed #bdbdbd" }} />
+          Cycle Start
+        </span>
+      </div>
     </div>
   );
 }

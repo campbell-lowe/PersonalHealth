@@ -452,14 +452,13 @@ function CycleEntryForm({ initialEntry }, ref) {
 
         <label className="survey-row">
           <span className="survey-label">Username</span>
-          <select
+          <input
+            type="text"
             name="username"
-            value={entry.username || "campbell.lowe"}
-            onChange={handleChange}
-            className={`survey-input ${getInputStateClass(entry.username || "campbell.lowe")}`}
-          >
-            <option value="campbell.lowe">campbell.lowe</option>
-          </select>
+            value={entry.username || ""}
+            readOnly
+            className={`survey-input survey-input-readonly ${getInputStateClass(entry.username)}`}
+          />
         </label>
 
         <label className="survey-row">

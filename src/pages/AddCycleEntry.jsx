@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
 import CycleEntryForm from "../components/CycleEntryForm";
 import "./AddCycleEntry.css";
+import { getActiveUsername } from "../utils/activeUsername";
 
-const CURRENT_USERNAME = "campbell.lowe";
 const FLOW_VALUES = new Set(["light", "medium", "heavy"]);
 
 function formatDateForInput(date) {
@@ -26,9 +26,11 @@ function dayDiff(fromDateString, toDateString) {
 }
 
 async function getSuggestedCycleDay(targetDate) {
+  const currentUsername = getActiveUsername();
+
   try {
     const response = await fetch(
-      `http://localhost:3000/api/cycle?username=${encodeURIComponent(CURRENT_USERNAME)}`
+      `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
     );
 
     if (!response.ok) {
@@ -97,6 +99,8 @@ function AddCycleEntry() {
   }
 
   async function loadEntry(targetDate = selectedDate) {
+    const currentUsername = getActiveUsername();
+
     if (!targetDate) {
       setStatusMessage("Pick a date first, then click Load Entry.");
       return;
@@ -107,7 +111,7 @@ function AddCycleEntry() {
       setSelectedDate(targetDate);
 
       const response = await fetch(
-        `http://localhost:3000/api/cycle/${targetDate}?username=${encodeURIComponent(CURRENT_USERNAME)}`
+        `http://localhost:3000/api/cycle/${targetDate}?username=${encodeURIComponent(currentUsername)}`
       );
 
       if (response.ok) {
@@ -118,7 +122,7 @@ function AddCycleEntry() {
         const suggestedCycleDay = await getSuggestedCycleDay(targetDate);
 
         setEntry({
-          username: CURRENT_USERNAME,
+          username: currentUsername,
           date: targetDate,
           cycleDay: suggestedCycleDay,
           sick: false,

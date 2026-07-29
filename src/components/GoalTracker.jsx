@@ -1,3 +1,5 @@
+import "./GoalTracker.css";
+
 function formatDate(date) {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -6,204 +8,170 @@ function formatDate(date) {
     return `${year}-${month}-${day}`;
 }
 
-
 function getDayNumber(dateString) {
     const [year, month, day] = dateString.split("-").map(Number);
-
-    return Date.UTC(year, month - 1, day) /
-        (1000 * 60 * 60 * 24);
+    return Date.UTC(year, month - 1, day) / (1000 * 60 * 60 * 24);
 }
 
-
-function GoalTracker({ goal, setGoals }) {
-
+function GoalTracker({ goal, setGoals, showStreak = true, trackerMode = "calendar" }) {
     const currentMonth = new Date();
-
-    const monthName = currentMonth.toLocaleString("default", {
-        month: "long",
-    });
-
+    const monthName = currentMonth.toLocaleString("default", { month: "long" });
     const year = currentMonth.getFullYear();
 
-
-    const daysInMonth = new Date(
-        year,
-        currentMonth.getMonth() + 1,
-        0
-    ).getDate();
-
-
+    const daysInMonth = new Date(year, currentMonth.getMonth() + 1, 0).getDate();
 
     const days = Array.from(
         { length: daysInMonth },
-        (_, i) =>
-            new Date(
-                year,
-                currentMonth.getMonth(),
-                i + 1
-            )
+        (_, index) => new Date(year, currentMonth.getMonth(), index + 1)
     );
 
-
-    function completeDay(day) {
+    function toggleDayCompletion(day) {
         const dateString = formatDate(day);
 
         setGoals((previousGoals) =>
             previousGoals.map((item) => {
-
-                if (item.id === goal.id) {
-
-                    if (
-                        item.completedDates.includes(dateString)
-                    ) {
-                        return {
-                            ...item,
-                            completedDates:
-                                item.completedDates.filter(
-                                    (date) =>
-                                        date !== dateString
-                                ),
-                        };
-                    }
-
-                    return {
-                        ...item,
-                        completedDates: [
-                            ...item.completedDates,
-                            dateString,
-                        ],
-                    };
+                if (item.id !== goal.id) {
+                    return item;
                 }
 
-                return item;
+                const alreadyDone = item.completedDates.includes(dateString);
+
+                return {
+                    ...item,
+                    completedDates: alreadyDone
+                        ? item.completedDates.filter((date) => date !== dateString)
+                        : [...item.completedDates, dateString],
+                };
             })
         );
     }
+
     function deleteGoal() {
+        setGoals((previousGoals) => previousGoals.filter((item) => item.id !== goal.id));
+    }
+
+    function toggleChecklistGoal() {
+        const today = formatDate(new Date());
+
         setGoals((previousGoals) =>
-            previousGoals.filter((item) => item.id !== goal.id)
+            previousGoals.map((item) => {
+                if (item.id !== goal.id) {
+                    return item;
+                }
+
+                const isChecked = Array.isArray(item.completedDates) && item.completedDates.length > 0;
+
+                return {
+                    ...item,
+                    completedDates: isChecked ? [] : [today],
+                };
+            })
         );
     }
 
     function getStreak() {
+        const sortedDays = [...goal.completedDates].sort().map(getDayNumber);
 
-        const dates = [...goal.completedDates]
-            .sort()
-            .map(getDayNumber);
-
-
-        if (dates.length === 0) {
+        if (sortedDays.length === 0) {
             return 0;
         }
 
-
         let streak = 1;
 
-
-        for (
-            let i = dates.length - 1;
-            i > 0;
-            i--
-        ) {
-
-            const difference =
-                dates[i] - dates[i - 1];
-
+        for (let index = sortedDays.length - 1; index > 0; index -= 1) {
+            const difference = sortedDays[index] - sortedDays[index - 1];
 
             if (difference === 1) {
-                streak++;
+                streak += 1;
             } else {
                 break;
             }
         }
 
-
         return streak;
     }
 
+    const sortedCompletedDates = [...goal.completedDates].sort();
+    const completedDaysThisMonth = sortedCompletedDates
+        .filter((date) => date.startsWith(`${year}-${String(currentMonth.getMonth() + 1).padStart(2, "0")}`))
+        .map((date) => Number(date.split("-")[2]));
+
+    if (trackerMode === "checklist") {
+        const isChecked = sortedCompletedDates.length > 0;
+        const lastChecked = isChecked ? sortedCompletedDates[sortedCompletedDates.length - 1] : null;
+
+        return (
+            <article className="goal-tracker-card checklist-card">
+                <header className="goal-tracker-header">
+                    <div>
+                        <h3>{goal.name}</h3>
+                        <p>{isChecked ? `Checked on ${lastChecked}` : "Not checked yet"}</p>
+                    </div>
+
+                    <button type="button" className="goal-delete-btn" onClick={deleteGoal}>
+                        Delete
+                    </button>
+                </header>
+
+                <button
+                    type="button"
+                    className={`goal-checklist-toggle ${isChecked ? "is-complete" : ""}`}
+                    onClick={toggleChecklistGoal}
+                    aria-pressed={isChecked}
+                >
+                    {isChecked ? "Checked" : "Mark as Ready"}
+                </button>
+            </article>
+        );
+    }
 
     return (
-        <div>
+        <article className="goal-tracker-card">
+            <header className="goal-tracker-header">
+                <div>
+                    <h3>{goal.name}</h3>
+                    <p>
+                        {monthName} {year}
+                    </p>
+                </div>
 
-            <h2>{goal.name}</h2>
+                <button type="button" className="goal-delete-btn" onClick={deleteGoal}>
+                    Delete
+                </button>
+            </header>
 
-            <h3>
-                {monthName} {year}
-            </h3>
-
-
-            <div>
-
+            <div className="goal-days-grid">
                 {days.map((day) => {
-
-                    const dateString =
-                        formatDate(day);
-
+                    const dateString = formatDate(day);
+                    const isComplete = goal.completedDates.includes(dateString);
 
                     return (
                         <button
                             key={dateString}
-                            onClick={() =>
-                                completeDay(day)
-                            }
+                            type="button"
+                            className={`goal-day-btn ${isComplete ? "is-complete" : ""}`}
+                            onClick={() => toggleDayCompletion(day)}
+                            aria-pressed={isComplete}
+                            aria-label={`${goal.name} day ${day.getDate()} ${isComplete ? "completed" : "not completed"}`}
                         >
-
                             {day.getDate()}
-
-                            {
-                                goal.completedDates.includes(
-                                    dateString
-                                )
-                                    ? "✓"
-                                    : ""
-                            }
-
                         </button>
                     );
-
                 })}
-
             </div>
 
-
-            <p>
-                Completed days:{" "}
-                {
-                    goal.completedDates
-                        .sort()
-                        .map(
-                            (date) =>
-                                Number(
-                                    date.split("-")[2]
-                                )
-                        )
-                        .join(", ")
-                }
-            </p>
-
-
-            <p>
-                🔥 Streak: {getStreak()} days
-            </p>
-            <p>
-                Completed days:{" "}
-                {goal.completedDates
-                    .sort()
-                    .map((date) => Number(date.split("-")[2]))
-                    .join(", ")}
-            </p>
-
-            <p>
-                🔥 Streak: {getStreak()} days
-            </p>
-
-            <button onClick={deleteGoal}>
-                🗑 Delete Goal
-            </button>
-
-        </div>
+            <footer className="goal-tracker-footer">
+                <p>
+                    Completed this month: {completedDaysThisMonth.length > 0 ? completedDaysThisMonth.join(", ") : "None yet"}
+                </p>
+                {showStreak ? (
+                    <p>Streak: {getStreak()} day(s)</p>
+                ) : (
+                    <p>Total check-ins: {sortedCompletedDates.length}</p>
+                )}
+            </footer>
+        </article>
     );
 }
-
 
 export default GoalTracker;

@@ -51,3 +51,14 @@ CREATE TABLE IF NOT EXISTS cycle_entries (
 
     UNIQUE(username, date)
 );
+
+CREATE TABLE IF NOT EXISTS wellness_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    category TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    completed_dates TEXT NOT NULL DEFAULT '[]',
+    position INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(username, category, goal_id)
+);
