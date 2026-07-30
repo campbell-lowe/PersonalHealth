@@ -4,6 +4,16 @@ import { getActiveUsername } from "../utils/activeUsername";
 const OVULATION_SIGNAL_DELTA = 0.2;
 const LH_POSITIVE_THRESHOLD = 1;
 
+const PERIOD_SHADE_FILL = "#9c1c5d";
+const PERIOD_SHADE_TEXT = "#6d1140";
+const PERIOD_LEGEND_BACKGROUND = "rgba(156, 28, 93, 0.16)";
+const PERIOD_LEGEND_BORDER = "rgba(109, 17, 64, 0.45)";
+
+const SPOTTING_SHADE_FILL = "#f57c00";
+const SPOTTING_SHADE_TEXT = "#8f4d00";
+const SPOTTING_LEGEND_BACKGROUND = "rgba(245, 124, 0, 0.16)";
+const SPOTTING_LEGEND_BORDER = "rgba(143, 77, 0, 0.35)";
+
 const TEMPERATURE_SOURCES = [
   { key: "thermometer", label: "Thermometer", dataKey: "thermometerTemp", color: "#ff5d57" },
   { key: "apple-watch", label: "Apple Watch", dataKey: "wristTemp", color: "#2470ff" },
@@ -342,9 +352,9 @@ function estimateOvulationForCycle(entries, options = {}) {
 
   days.forEach((day) => {
     if (day.cmType.includes("egg white") || day.cmType.includes("eggwhite") || day.cmType.includes("ewcm")) {
-      addScoreReason(day, "cm-eggwhite", "Egg white cervical mucus present", 0.5);
+      addScoreReason(day, "cm-eggwhite", "Egg white cervical mucus present", 0.75);
     } else if (day.cmType.includes("watery")) {
-      addScoreReason(day, "cm-watery", "Watery cervical mucus present", 0.25);
+      addScoreReason(day, "cm-watery", "Watery cervical mucus present", 0.4);
     }
   });
 
@@ -1086,7 +1096,7 @@ function SimpleLineChart({
                 y={margin}
                 width={xBandWidth}
                 height={height - margin * 2}
-                fill="#f57c00"
+                fill={SPOTTING_SHADE_FILL}
                 opacity="0.16"
                 rx="4"
               />
@@ -1099,8 +1109,8 @@ function SimpleLineChart({
               y={margin}
               width={xBandWidth}
               height={height - margin * 2}
-              fill="#b71c1c"
-              opacity="0.14"
+              fill={PERIOD_SHADE_FILL}
+              opacity="0.16"
               rx="4"
             />
           ))}
@@ -1365,7 +1375,7 @@ function SimpleLineChart({
               alignItems: "center",
               gap: "6px",
               fontSize: "0.9rem",
-              color: "#7a1a1a",
+              color: PERIOD_SHADE_TEXT,
             }}
           >
             <span
@@ -1373,8 +1383,8 @@ function SimpleLineChart({
               style={{
                 width: "12px",
                 height: "12px",
-                background: "rgba(183, 28, 28, 0.14)",
-                border: "1px solid rgba(183, 28, 28, 0.35)",
+                background: PERIOD_LEGEND_BACKGROUND,
+                border: `1px solid ${PERIOD_LEGEND_BORDER}`,
                 borderRadius: "2px",
               }}
             />
@@ -1389,7 +1399,7 @@ function SimpleLineChart({
               alignItems: "center",
               gap: "6px",
               fontSize: "0.9rem",
-              color: "#8f4d00",
+              color: SPOTTING_SHADE_TEXT,
             }}
           >
             <span
@@ -1397,8 +1407,8 @@ function SimpleLineChart({
               style={{
                 width: "12px",
                 height: "12px",
-                background: "rgba(245, 124, 0, 0.16)",
-                border: "1px solid rgba(143, 77, 0, 0.35)",
+                background: SPOTTING_LEGEND_BACKGROUND,
+                border: `1px solid ${SPOTTING_LEGEND_BORDER}`,
                 borderRadius: "2px",
               }}
             />
@@ -1577,7 +1587,7 @@ function TemperatureSection({ entries, estimatedOvulationDate = null }) {
         aboveBaselineDateSet={aboveBaselineDateSet}
         aboveBaselineLabel={`Above Baseline (+${OVULATION_SIGNAL_DELTA.toFixed(1)} Ovulation Signal)`}
         shadedDateSet={periodDateSet}
-        shadedLabel="Period / Bleeding"
+        shadedLabel="Period Flow"
         secondaryShadedDateSet={spottingDateSet}
         secondaryShadedLabel="Spotting"
         referenceLineValue={baselineResult.baseline}
@@ -1873,7 +1883,7 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
                 y={margin}
                 width={xBandWidth}
                 height={height - margin * 2}
-                fill="#f57c00"
+                fill={SPOTTING_SHADE_FILL}
                 opacity="0.16"
                 rx="4"
               />
@@ -1886,8 +1896,8 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
               y={margin}
               width={xBandWidth}
               height={height - margin * 2}
-              fill="#b71c1c"
-              opacity="0.14"
+              fill={PERIOD_SHADE_FILL}
+              opacity="0.16"
               rx="4"
             />
           ))}
@@ -2221,7 +2231,7 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
             alignItems: "center",
             gap: "6px",
             fontSize: "0.9rem",
-            color: "#7a1a1a",
+            color: PERIOD_SHADE_TEXT,
           }}
         >
           <span
@@ -2229,12 +2239,12 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
             style={{
               width: "12px",
               height: "12px",
-              background: "rgba(183, 28, 28, 0.14)",
-              border: "1px solid rgba(183, 28, 28, 0.35)",
+              background: PERIOD_LEGEND_BACKGROUND,
+              border: `1px solid ${PERIOD_LEGEND_BORDER}`,
               borderRadius: "2px",
             }}
           />
-          Period / Bleeding
+          Period Flow
         </span>
 
         <span
@@ -2243,7 +2253,7 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
             alignItems: "center",
             gap: "6px",
             fontSize: "0.9rem",
-            color: "#8f4d00",
+            color: SPOTTING_SHADE_TEXT,
           }}
         >
           <span
@@ -2251,8 +2261,8 @@ function LhTimelineChart({ entries, estimatedOvulationDate = null }) {
             style={{
               width: "12px",
               height: "12px",
-              background: "rgba(245, 124, 0, 0.16)",
-              border: "1px solid rgba(143, 77, 0, 0.35)",
+              background: SPOTTING_LEGEND_BACKGROUND,
+              border: `1px solid ${SPOTTING_LEGEND_BORDER}`,
               borderRadius: "2px",
             }}
           />
@@ -2271,7 +2281,7 @@ function UnprotectedSexTimelineChart({
   cycleStartDate = "",
 }) {
   const width = 760;
-  const height = 250;
+  const height = 292;
   const margin = 92;
 
   function getWindowChanceFromDistance(distance) {
@@ -2299,7 +2309,41 @@ function UnprotectedSexTimelineChart({
       ...referenceIndices.map((index) => getWindowChanceFromDistance(dayIndex - index))
     );
 
-    return combined;
+    const isPredictedReference = ovulationIndices.length === 0;
+    const confidenceFactor = isPredictedReference ? 0.72 : 1;
+
+    return Math.round(combined * confidenceFactor);
+  }
+
+  function getFertileWindowChanceFromReferences(dayIndex, referenceIndices, isPredictedReference) {
+    if (referenceIndices.length === 0) {
+      return 0;
+    }
+
+    const combined = Math.max(
+      ...referenceIndices.map((referenceIndex) =>
+        getWindowChanceFromDistance(dayIndex - referenceIndex)
+      )
+    );
+
+    const confidenceFactor = isPredictedReference ? 0.72 : 1;
+    return Math.round(combined * confidenceFactor);
+  }
+
+  function getNearestReferenceDistance(dayIndex, referenceIndices) {
+    if (!referenceIndices.length) {
+      return null;
+    }
+
+    return referenceIndices.reduce((bestDistance, referenceIndex) => {
+      const distance = dayIndex - referenceIndex;
+
+      if (bestDistance === null) {
+        return distance;
+      }
+
+      return Math.abs(distance) < Math.abs(bestDistance) ? distance : bestDistance;
+    }, null);
   }
 
   const eventPoints = entries
@@ -2315,6 +2359,22 @@ function UnprotectedSexTimelineChart({
       (point) =>
         point.intercourse === true &&
         (point.usedProtection === false || point.protectionType === "none")
+    );
+
+  const protectedEventPoints = entries
+    .map((entry, index) => ({
+      index,
+      date: entry.date,
+      cycleDay: entry.cycleDay,
+      intercourse: entry.intercourse,
+      usedProtection: entry.usedProtection,
+      protectionType: entry.protectionType,
+    }))
+    .filter(
+      (point) =>
+        point.intercourse === true &&
+        (point.usedProtection === true ||
+          (point.protectionType && String(point.protectionType).toLowerCase() !== "none"))
     );
 
   const ovulationPoints = entries
@@ -2353,18 +2413,71 @@ function UnprotectedSexTimelineChart({
   const ovulationIndices = ovulationPoints.map((point) => point.index);
   const estimatedIndices = estimatedOvulationPoint ? [estimatedOvulationPoint.index] : [];
   const peakIndices = peakPoints.map((point) => point.index);
+  const fertileReferenceIndices =
+    ovulationIndices.length > 0
+      ? ovulationIndices
+      : estimatedIndices.length > 0
+        ? estimatedIndices
+        : peakIndices;
   const confirmedOvulationDates = ovulationPoints
     .map((point) => point.date)
     .filter(Boolean);
 
   const eventPointsWithChance = eventPoints.map((point) => ({
     ...point,
+    nearestDistanceFromReference: getNearestReferenceDistance(point.index, fertileReferenceIndices),
     chancePercent: getEstimatedChancePercent(
       point.index,
       ovulationIndices.length > 0 ? ovulationIndices : estimatedIndices,
       peakIndices
     ),
   }));
+
+  const fertileWindowIndices = new Set();
+  fertileReferenceIndices.forEach((referenceIndex) => {
+    for (let offset = -5; offset <= 1; offset += 1) {
+      const index = referenceIndex + offset;
+      if (index >= 0 && index < entries.length) {
+        fertileWindowIndices.add(index);
+      }
+    }
+  });
+
+  function getFertileWindowChanceForDay(dayIndex) {
+    if (fertileReferenceIndices.length === 0) {
+      return 0;
+    }
+
+    return getFertileWindowChanceFromReferences(
+      dayIndex,
+      fertileReferenceIndices,
+      ovulationIndices.length === 0
+    );
+  }
+
+  function getFertileWindowShade(chancePercent) {
+    if (chancePercent <= 0) {
+      return { fill: "#e3f2fd", opacity: 0.14 };
+    }
+
+    if (chancePercent <= 4) {
+      return { fill: "#e3f2fd", opacity: 0.2 };
+    }
+
+    if (chancePercent <= 8) {
+      return { fill: "#d4ebff", opacity: 0.24 };
+    }
+
+    if (chancePercent <= 13) {
+      return { fill: "#bbdefb", opacity: 0.28 };
+    }
+
+    if (chancePercent <= 18) {
+      return { fill: "#90caf9", opacity: 0.32 };
+    }
+
+    return { fill: "#64b5f6", opacity: 0.36 };
+  }
 
   const xForIndex = (index) => {
     const denominator = Math.max(entries.length - 1, 1);
@@ -2427,9 +2540,44 @@ function UnprotectedSexTimelineChart({
   const ovulationLaneY = 52;
   const peakLaneY = 84;
   const unprotectedLaneY = 116;
-  const axisY = 146;
+  const protectedLaneY = 144;
+  const axisY = 172;
   const cycleDayTicks = buildCycleDayTicks(entries);
   const eventPointsWithLayout = assignPercentLabelRows(eventPointsWithChance);
+  const highRiskEvents = eventPointsWithChance.filter((point) => point.chancePercent >= 20);
+  const mediumRiskEvents = eventPointsWithChance.filter(
+    (point) => point.chancePercent >= 10 && point.chancePercent < 20
+  );
+  const lowerRiskEvents = eventPointsWithChance.filter((point) => point.chancePercent < 10);
+  const fertileWindowEvents = eventPointsWithChance.filter((point) => fertileWindowIndices.has(point.index));
+  const highestRiskEvent = eventPointsWithChance.reduce((best, current) => {
+    if (!best) return current;
+    if (current.chancePercent > best.chancePercent) return current;
+    if (current.chancePercent === best.chancePercent && current.index < best.index) return current;
+    return best;
+  }, null);
+
+  function formatDistanceFromReference(distance) {
+    if (distance === null || !Number.isFinite(distance)) {
+      return "No ovulation reference";
+    }
+
+    if (distance === 0) {
+      return "On reference day";
+    }
+
+    if (distance < 0) {
+      return `${Math.abs(distance)} day(s) before reference`;
+    }
+
+    return `${distance} day(s) after reference`;
+  }
+
+  function getRiskColor(chancePercent) {
+    if (chancePercent >= 20) return "#b71c1c";
+    if (chancePercent >= 10) return "#e65100";
+    return "#7f0000";
+  }
 
   return (
     <section
@@ -2462,6 +2610,24 @@ function UnprotectedSexTimelineChart({
           strokeWidth="1"
         />
 
+        {Array.from(fertileWindowIndices).map((index) => {
+          const chancePercent = getFertileWindowChanceForDay(index);
+          const shade = getFertileWindowShade(chancePercent);
+
+          return (
+            <rect
+              key={`unprotected-fertile-window-${index}`}
+              x={xForIndex(index) - xBandWidth / 2}
+              y={ovulationLaneY - 10}
+              width={xBandWidth}
+              height={axisY - (ovulationLaneY - 10)}
+              fill={shade.fill}
+              opacity={shade.opacity}
+              rx="4"
+            />
+          );
+        })}
+
         {Array.from(spottingIndexSet)
           .filter((index) => !periodIndexSet.has(index))
           .map((index) => (
@@ -2471,7 +2637,7 @@ function UnprotectedSexTimelineChart({
               y={ovulationLaneY - 10}
               width={xBandWidth}
               height={axisY - (ovulationLaneY - 10)}
-              fill="#f57c00"
+              fill={SPOTTING_SHADE_FILL}
               opacity="0.16"
               rx="4"
             />
@@ -2484,8 +2650,8 @@ function UnprotectedSexTimelineChart({
             y={ovulationLaneY - 10}
             width={xBandWidth}
             height={axisY - (ovulationLaneY - 10)}
-            fill="#b71c1c"
-            opacity="0.14"
+            fill={PERIOD_SHADE_FILL}
+            opacity="0.16"
             rx="4"
           />
         ))}
@@ -2510,6 +2676,15 @@ function UnprotectedSexTimelineChart({
 
         <line
           x1={margin}
+          y1={protectedLaneY}
+          x2={width - margin}
+          y2={protectedLaneY}
+          stroke="#e4efe4"
+          strokeWidth="1"
+        />
+
+        <line
+          x1={margin}
           y1={axisY}
           x2={width - margin}
           y2={axisY}
@@ -2526,6 +2701,9 @@ function UnprotectedSexTimelineChart({
         <text x="8" y={unprotectedLaneY + 3} fill="#7f0000" fontSize="10" textAnchor="start">
           Unprotected
         </text>
+        <text x="8" y={protectedLaneY + 3} fill="#1b5e20" fontSize="10" textAnchor="start">
+          Protected
+        </text>
 
         {eventPointsWithLayout.map((point, pointIndex) => (
           <g key={`unprotected-${point.index}-${pointIndex}`}>
@@ -2534,7 +2712,7 @@ function UnprotectedSexTimelineChart({
               y1={axisY}
               x2={point.x}
               y2={unprotectedLaneY}
-              stroke="#e53935"
+              stroke={getRiskColor(point.chancePercent)}
               strokeWidth="1.6"
               opacity="0.95"
             />
@@ -2543,7 +2721,7 @@ function UnprotectedSexTimelineChart({
               cy={unprotectedLaneY}
               r="7"
               fill="#fff"
-              stroke="#7f0000"
+              stroke={getRiskColor(point.chancePercent)}
               strokeWidth="2.2"
             >
               <title>
@@ -2554,7 +2732,7 @@ function UnprotectedSexTimelineChart({
               cx={point.x}
               cy={unprotectedLaneY}
               r="3"
-              fill="#e53935"
+              fill={getRiskColor(point.chancePercent)}
             />
             <text
               x={point.x}
@@ -2569,6 +2747,34 @@ function UnprotectedSexTimelineChart({
             >
               {point.chancePercent}%
             </text>
+          </g>
+        ))}
+
+        {protectedEventPoints.map((point, pointIndex) => (
+          <g key={`protected-${point.index}-${pointIndex}`}>
+            <line
+              x1={xForIndex(point.index)}
+              y1={axisY}
+              x2={xForIndex(point.index)}
+              y2={protectedLaneY}
+              stroke="#2e7d32"
+              strokeWidth="1.3"
+              opacity="0.85"
+            />
+            <rect
+              x={xForIndex(point.index) - 4.5}
+              y={protectedLaneY - 4.5}
+              width="9"
+              height="9"
+              rx="2"
+              fill="#e8f5e9"
+              stroke="#2e7d32"
+              strokeWidth="1.6"
+            >
+              <title>
+                {`Protected sex | ${point.date || "Unknown date"} (CD ${point.cycleDay || "-"})`}
+              </title>
+            </rect>
           </g>
         ))}
 
@@ -2677,9 +2883,19 @@ function UnprotectedSexTimelineChart({
           No unprotected sex logged in this cycle.
         </p>
       ) : (
-        <p style={{ margin: "10px 0 0", color: "#666" }}>
-          {eventPoints.length} unprotected event{eventPoints.length === 1 ? "" : "s"} logged.
-        </p>
+        <div style={{ marginTop: "10px", display: "grid", gap: "4px", color: "#666" }}>
+          <p style={{ margin: 0 }}>
+            {eventPoints.length} unprotected event{eventPoints.length === 1 ? "" : "s"} logged.
+          </p>
+          <p style={{ margin: 0 }}>
+            In fertile window: {fertileWindowEvents.length} | High risk: {highRiskEvents.length} | Medium risk: {mediumRiskEvents.length} | Lower risk: {lowerRiskEvents.length}
+          </p>
+          <p style={{ margin: 0 }}>
+            {highestRiskEvent
+              ? `Highest estimated chance: ${highestRiskEvent.chancePercent}% on ${highestRiskEvent.date || "Unknown date"} (CD ${highestRiskEvent.cycleDay || "-"})`
+              : "No chance estimate available yet."}
+          </p>
+        </div>
       )}
 
       <p style={{ margin: "6px 0 0", color: "#777", fontSize: "0.82rem" }}>
@@ -2746,6 +2962,21 @@ function UnprotectedSexTimelineChart({
             style={{
               width: "9px",
               height: "9px",
+              borderRadius: "2px",
+              border: "2px solid #2e7d32",
+              background: "#e8f5e9",
+              boxSizing: "border-box",
+            }}
+          />
+          Protected Sex
+        </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "9px",
+              height: "9px",
               borderRadius: "999px",
               border: "2px solid #0d47a1",
               background: "#fff",
@@ -2789,12 +3020,12 @@ function UnprotectedSexTimelineChart({
             style={{
               width: "12px",
               height: "12px",
-              background: "rgba(183, 28, 28, 0.14)",
-              border: "1px solid rgba(183, 28, 28, 0.35)",
+              background: PERIOD_LEGEND_BACKGROUND,
+              border: `1px solid ${PERIOD_LEGEND_BORDER}`,
               borderRadius: "2px",
             }}
           />
-          Period / Bleeding
+          Period Flow
         </span>
 
         <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
@@ -2803,14 +3034,74 @@ function UnprotectedSexTimelineChart({
             style={{
               width: "12px",
               height: "12px",
-              background: "rgba(245, 124, 0, 0.16)",
-              border: "1px solid rgba(143, 77, 0, 0.35)",
+              background: SPOTTING_LEGEND_BACKGROUND,
+              border: `1px solid ${SPOTTING_LEGEND_BORDER}`,
               borderRadius: "2px",
             }}
           />
           Spotting
         </span>
+
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: "12px",
+              height: "12px",
+              background: "rgba(100, 181, 246, 0.28)",
+              border: "1px solid rgba(21, 101, 192, 0.42)",
+              borderRadius: "2px",
+            }}
+          />
+          Fertile Window (Light Blue to Deeper Blue = More Fertile)
+        </span>
       </div>
+
+      {eventPointsWithChance.length > 0 ? (
+        <div style={{ marginTop: "12px", overflowX: "auto" }}>
+          <table
+            style={{
+              width: "100%",
+              minWidth: "560px",
+              borderCollapse: "collapse",
+              fontSize: "0.88rem",
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "6px" }}>Date</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "6px" }}>Cycle Day</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "6px" }}>Chance</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: "6px" }}>Timing vs Ovulation Ref</th>
+              </tr>
+            </thead>
+            <tbody>
+              {eventPointsWithChance
+                .slice()
+                .sort((a, b) => a.index - b.index)
+                .map((point) => (
+                  <tr key={`unprotected-detail-${point.index}-${point.date || "unknown"}`}>
+                    <td style={{ borderBottom: "1px solid #efefef", padding: "6px" }}>{point.date || "-"}</td>
+                    <td style={{ borderBottom: "1px solid #efefef", padding: "6px" }}>{point.cycleDay || "-"}</td>
+                    <td
+                      style={{
+                        borderBottom: "1px solid #efefef",
+                        padding: "6px",
+                        color: getRiskColor(point.chancePercent),
+                        fontWeight: 700,
+                      }}
+                    >
+                      {point.chancePercent}%
+                    </td>
+                    <td style={{ borderBottom: "1px solid #efefef", padding: "6px" }}>
+                      {formatDistanceFromReference(point.nearestDistanceFromReference)}
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </section>
   );
 }
