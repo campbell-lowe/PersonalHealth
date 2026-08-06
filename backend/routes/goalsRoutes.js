@@ -4,6 +4,20 @@ import db from "../database.js";
 const router = express.Router();
 
 const ALLOWED_CATEGORIES = new Set(["pregnancy", "lifestyle"]);
+let goalsSaveQueue = Promise.resolve();
+
+function runDb(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
 
 function normalizeCategory(value) {
   return String(value || "").trim().toLowerCase();
@@ -98,95 +112,66 @@ router.put("/", (req, res) => {
     })
     .filter(Boolean);
 
-  db.serialize(() => {
-    db.run("BEGIN TRANSACTION");
+  const queuedSave = goalsSaveQueue.then(async () => {
+    const insertSql = `
+      INSERT INTO wellness_goals (
+        username,
+        category,
+        goal_id,
+        name,
+        completed_dates,
+        position
+      ) VALUES (?, ?, ?, ?, ?, ?);
+    `;
 
-    db.run(
-      "DELETE FROM wellness_goals WHERE username = ? AND category = ?",
-      [username, category],
-      (deleteError) => {
-        if (deleteError) {
-          console.error(deleteError);
-          db.run("ROLLBACK");
-          return res.status(500).json({ error: deleteError.message });
-        }
+    await runDb("BEGIN IMMEDIATE TRANSACTION");
 
-        const insertSql = `
-          INSERT INTO wellness_goals (
-            username,
-            category,
-            goal_id,
-            name,
-            completed_dates,
-            position
-          ) VALUES (?, ?, ?, ?, ?, ?);
-        `;
+    try {
+      await runDb(
+        "DELETE FROM wellness_goals WHERE username = ? AND category = ?",
+        [username, category]
+      );
 
-        let pending = normalizedGoals.length;
-
-        if (pending === 0) {
-          db.run("COMMIT", (commitError) => {
-            if (commitError) {
-              console.error(commitError);
-              db.run("ROLLBACK");
-              return res.status(500).json({ error: commitError.message });
-            }
-
-            res.json({ success: true, username, category, count: 0 });
-          });
-          return;
-        }
-
-        let hasFailed = false;
-
-        normalizedGoals.forEach((goal) => {
-          db.run(
-            insertSql,
-            [
-              username,
-              category,
-              goal.id,
-              goal.name,
-              JSON.stringify(goal.completedDates),
-              goal.position,
-            ],
-            (insertError) => {
-              if (hasFailed) {
-                return;
-              }
-
-              if (insertError) {
-                hasFailed = true;
-                console.error(insertError);
-                db.run("ROLLBACK");
-                res.status(500).json({ error: insertError.message });
-                return;
-              }
-
-              pending -= 1;
-
-              if (pending === 0) {
-                db.run("COMMIT", (commitError) => {
-                  if (commitError) {
-                    console.error(commitError);
-                    db.run("ROLLBACK");
-                    return res.status(500).json({ error: commitError.message });
-                  }
-
-                  res.json({
-                    success: true,
-                    username,
-                    category,
-                    count: normalizedGoals.length,
-                  });
-                });
-              }
-            }
-          );
-        });
+      for (const goal of normalizedGoals) {
+        await runDb(insertSql, [
+          username,
+          category,
+          goal.id,
+          goal.name,
+          JSON.stringify(goal.completedDates),
+          goal.position,
+        ]);
       }
-    );
+
+      await runDb("COMMIT");
+
+      return {
+        success: true,
+        username,
+        category,
+        count: normalizedGoals.length,
+      };
+    } catch (error) {
+      try {
+        await runDb("ROLLBACK");
+      } catch (rollbackError) {
+        console.error("Rollback failed:", rollbackError);
+      }
+
+      throw error;
+    }
   });
+
+  goalsSaveQueue = queuedSave.catch(() => undefined);
+
+  queuedSave
+    .then((payload) => {
+      res.json(payload);
+    })
+    .catch((error) => {
+      console.error(error);
+      res.status(500).json({ error: error.message || "Could not save goals." });
+    });
 });
 
 export default router;
