@@ -238,6 +238,22 @@ function normalizeCycleDayValue(value) {
   return day >= 1 ? day : null;
 }
 
+function isFutureIsoDate(dateString) {
+  if (typeof dateString !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return false;
+  }
+
+  const input = new Date(`${dateString}T00:00:00`);
+  if (Number.isNaN(input.getTime())) {
+    return false;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return input > today;
+}
+
 function resolveCycleDayForSave(db, username, date, period, requestedCycleDay, callback) {
   const normalizedRequestedCycleDay = normalizeCycleDayValue(requestedCycleDay);
 
@@ -370,6 +386,24 @@ router.post("/", (req, res) => {
     sleepHours,
     notes,
   } = req.body;
+
+  if (!username || typeof username !== "string") {
+    return res.status(400).json({
+      error: "Username is required.",
+    });
+  }
+
+  if (!date || typeof date !== "string") {
+    return res.status(400).json({
+      error: "Date is required in YYYY-MM-DD format.",
+    });
+  }
+
+  if (isFutureIsoDate(date)) {
+    return res.status(400).json({
+      error: "Future entries are not allowed.",
+    });
+  }
 
   const updateSql = `
     UPDATE cycle_entries

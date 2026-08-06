@@ -153,8 +153,90 @@ function addScoreReason(day, code, label, points) {
   day.score += points;
 }
 
+function computeCycleCombinedBaseline(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return null;
+  }
+
+  const tempPoints = entries
+    .map((entry, index) => ({
+      index,
+      value: getCombinedTemperature(entry),
+      ovulationConfirmed: entry?.ovulationConfirmed === true,
+    }))
+    .filter((point) => point.value !== null);
+
+  const result = computeBaselineForTemperature(tempPoints);
+  return result.baseline;
+}
+
+function getShortCycleBaselineFallback(previousCycles) {
+  if (!Array.isArray(previousCycles) || previousCycles.length === 0) {
+    return {
+      baseline: null,
+      source: "none",
+    };
+  }
+
+  const immediatePreviousCycle = previousCycles[previousCycles.length - 1] || null;
+  const immediatePreviousBaseline = immediatePreviousCycle
+    ? computeCycleCombinedBaseline(immediatePreviousCycle.entries)
+    : null;
+
+  if (immediatePreviousBaseline !== null) {
+    return {
+      baseline: Number(immediatePreviousBaseline.toFixed(2)),
+      source: "previous-cycle",
+    };
+  }
+
+  const historicalBaselines = previousCycles
+    .map((cycle) => computeCycleCombinedBaseline(cycle.entries))
+    .filter((value) => value !== null);
+
+  if (historicalBaselines.length === 0) {
+    return {
+      baseline: null,
+      source: "none",
+    };
+  }
+
+  const historicalAverage = average(historicalBaselines);
+
+  return {
+    baseline:
+      historicalAverage === null ? null : Number(historicalAverage.toFixed(2)),
+    source: "historical-average",
+  };
+}
+
+function formatBaselineSourceLabel(source) {
+  if (source === "previous-cycle") {
+    return "Previous cycle baseline";
+  }
+
+  if (source === "historical-average") {
+    return "Historical average baseline";
+  }
+
+  if (source === "cycle-estimated") {
+    return "Current cycle estimated baseline";
+  }
+
+  if (source === "cycle-confirmed") {
+    return "Current cycle confirmed baseline";
+  }
+
+  return "Cycle baseline";
+}
+
 function estimateOvulationForCycle(entries, options = {}) {
   const cycleEnded = options.cycleEnded === true;
+  const shortCycleEntryThreshold = Number.isFinite(Number(options.shortCycleEntryThreshold))
+    ? Math.max(1, Math.floor(Number(options.shortCycleEntryThreshold)))
+    : 15;
+  const shortCycleFallbackBaseline = toNumber(options.shortCycleFallbackBaseline);
+  const shortCycleFallbackSource = String(options.shortCycleFallbackSource || "").trim();
 
   if (!Array.isArray(entries) || entries.length === 0) {
     return {
@@ -168,6 +250,7 @@ function estimateOvulationForCycle(entries, options = {}) {
       estimatedOvulationTopCandidates: [],
       estimatedBaseline: null,
       estimatedBaselineIsEstimated: true,
+      estimatedBaselineSource: "none",
       estimatedCycleLhPeak: null,
     };
   }
@@ -197,7 +280,18 @@ function estimateOvulationForCycle(entries, options = {}) {
       ovulationConfirmed: entries[day.index]?.ovulationConfirmed === true,
     }));
 
-  const baselineResult = computeBaselineForTemperature(tempPoints);
+  let baselineResult = computeBaselineForTemperature(tempPoints);
+  let baselineSource = baselineResult.isEstimated ? "cycle-estimated" : "cycle-confirmed";
+
+  if (entries.length < shortCycleEntryThreshold && shortCycleFallbackBaseline !== null) {
+    baselineResult = {
+      baseline: shortCycleFallbackBaseline,
+      isEstimated: true,
+    };
+
+    baselineSource = shortCycleFallbackSource || "previous-cycle";
+  }
+
   const riseStart =
     baselineResult.baseline === null
       ? null
@@ -439,6 +533,7 @@ function estimateOvulationForCycle(entries, options = {}) {
       estimatedOvulationTopCandidates: [],
       estimatedBaseline: baselineResult.baseline,
       estimatedBaselineIsEstimated: baselineResult.isEstimated,
+      estimatedBaselineSource: baselineSource,
       estimatedCycleLhPeak: cycleLhMax,
     };
   }
@@ -461,6 +556,7 @@ function estimateOvulationForCycle(entries, options = {}) {
       estimatedOvulationTopCandidates: [],
       estimatedBaseline: baselineResult.baseline,
       estimatedBaselineIsEstimated: baselineResult.isEstimated,
+      estimatedBaselineSource: baselineSource,
       estimatedCycleLhPeak: cycleLhMax,
     };
   }
@@ -476,6 +572,7 @@ function estimateOvulationForCycle(entries, options = {}) {
     estimatedOvulationTopCandidates,
     estimatedBaseline: baselineResult.baseline,
     estimatedBaselineIsEstimated: baselineResult.isEstimated,
+    estimatedBaselineSource: baselineSource,
     estimatedCycleLhPeak: cycleLhMax,
   };
 }
@@ -3185,10 +3282,20 @@ function CycleDashboard({ onOpenDueDateEstimator = null, onOpenPhaseGuide = null
 
   const selectedEntries = selectedCycle?.entries || [];
   const currentCycleEntry = selectedEntries.length > 0 ? selectedEntries[selectedEntries.length - 1] : null;
+  const shortCycleBaselineFallback = useMemo(
+    () => getShortCycleBaselineFallback(previousCompletedCycles),
+    [previousCompletedCycles]
+  );
 
   const estimatedOvulation = useMemo(
-    () => estimateOvulationForCycle(selectedEntries, { cycleEnded: selectedCycleHasEnded }),
-    [selectedEntries, selectedCycleHasEnded]
+    () =>
+      estimateOvulationForCycle(selectedEntries, {
+        cycleEnded: selectedCycleHasEnded,
+        shortCycleEntryThreshold: 15,
+        shortCycleFallbackBaseline: shortCycleBaselineFallback.baseline,
+        shortCycleFallbackSource: shortCycleBaselineFallback.source,
+      }),
+    [selectedEntries, selectedCycleHasEnded, shortCycleBaselineFallback]
   );
 
   const historicalPrediction = useMemo(
@@ -3418,6 +3525,9 @@ function CycleDashboard({ onOpenDueDateEstimator = null, onOpenPhaseGuide = null
                   ? " (estimated)"
                   : " (confirmed)"
                 : ""}
+              {estimatedOvulation.estimatedBaseline !== null
+                ? ` | Source: ${formatBaselineSourceLabel(estimatedOvulation.estimatedBaselineSource)}`
+                : ""}
               {estimatedOvulation.estimatedCycleLhPeak !== null
                 ? ` | Cycle LH peak: ${estimatedOvulation.estimatedCycleLhPeak.toFixed(2)}`
                 : " | Cycle LH peak: Not available"}
@@ -3602,7 +3712,15 @@ export function AllCyclesChartsPage() {
     const dates = cycleWindows
       .map((cycle, index) => {
         const cycleEnded = index < cycleWindows.length - 1;
-        const estimate = estimateOvulationForCycle(cycle.entries, { cycleEnded });
+        const shortCycleFallback = getShortCycleBaselineFallback(
+          cycleWindows.slice(0, index)
+        );
+        const estimate = estimateOvulationForCycle(cycle.entries, {
+          cycleEnded,
+          shortCycleEntryThreshold: 15,
+          shortCycleFallbackBaseline: shortCycleFallback.baseline,
+          shortCycleFallbackSource: shortCycleFallback.source,
+        });
         return estimate.estimatedOvulationDate || null;
       })
       .filter(Boolean);
