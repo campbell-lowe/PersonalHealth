@@ -151,6 +151,13 @@ function App() {
 
   return (
     <div className="app-shell">
+      <header className="app-chrome">
+        <div>
+          <p className="home-kicker">Personal Health Workspace</p>
+          <p className="app-chrome-subtitle">One timeline for cycle tracking and pregnancy planning.</p>
+        </div>
+      </header>
+
       <nav className="top-nav">
         {topNavItems.map((item) => (
           <button
@@ -192,13 +199,15 @@ function App() {
 
       <p className="active-user-badge">Active user: {normalizeUsername(activeUsername)}</p>
 
-      {page === "home" && <HomeLanding goTo={setPage} />}
-      {page === "pregnancy" && (
-        <DreamPregnancySection key={`preg-${activeUsername}`} username={activeUsername} />
-      )}
-      {page === "cycle" && (
-        <CycleTracking key={`cycle-${activeUsername}`} setPage={setPage} username={activeUsername} />
-      )}
+      <main className="app-content-shell">
+        {page === "home" && <HomeLanding goTo={setPage} />}
+        {page === "pregnancy" && (
+          <DreamPregnancySection key={`preg-${activeUsername}`} username={activeUsername} />
+        )}
+        {page === "cycle" && (
+          <CycleTracking key={`cycle-${activeUsername}`} setPage={setPage} username={activeUsername} />
+        )}
+      </main>
     </div>
   );
 }

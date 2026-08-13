@@ -1,24 +1,24 @@
 .add-cycle-entry-page {
   max-width: 980px;
   margin: 0 auto;
-  padding: 10px 12px 24px;
+  padding: 4px 4px 18px;
 }
 
 .entry-intro {
   margin: 0 0 12px;
-  color: #475569;
+  color: var(--text-muted);
 }
 
 .entry-hotkeys-note {
   margin: 0 0 10px;
-  color: #6b7280;
+  color: var(--text-muted);
   font-size: 0.88rem;
 }
 
 .entry-calendar-card {
-  border: 1px solid #dbe5ef;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 249, 241, 0.95) 100%);
   padding: 14px;
   text-align: left;
 }
@@ -37,13 +37,13 @@
 }
 
 .calendar-month-btn {
-  border: none;
+  border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: 9px 12px;
   font-weight: 600;
   cursor: pointer;
-  background: #e2e8f0;
-  color: #0f172a;
+  background: #fff;
+  color: var(--accent-strong);
 }
 
 .entry-calendar-weekdays {
@@ -57,7 +57,7 @@
   text-align: center;
   font-size: 0.8rem;
   font-weight: 700;
-  color: #475569;
+  color: var(--text-muted);
 }
 
 .entry-calendar-grid {
@@ -73,9 +73,9 @@
 .entry-calendar-day {
   min-height: 78px;
   border-radius: 10px;
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
-  color: #0f172a;
+  border: 1px solid #e4d6c7;
+  background: #fffdf9;
+  color: var(--text);
   cursor: pointer;
   display: grid;
   align-content: space-between;
@@ -91,13 +91,13 @@
 .entry-calendar-day-cycle {
   font-size: 0.72rem;
   font-weight: 700;
-  color: #334155;
+  color: var(--text-muted);
   letter-spacing: 0.02em;
 }
 
 .entry-calendar-day small {
   font-size: 0.72rem;
-  color: #475569;
+  color: var(--text-muted);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -130,21 +130,21 @@
 }
 
 .entry-calendar-day.is-projected-cycle-start {
-  border-color: #7c3aed;
-  box-shadow: inset 0 0 0 2px rgba(124, 58, 237, 0.35);
+  border-color: #b07a51;
+  box-shadow: inset 0 0 0 2px rgba(176, 122, 81, 0.35);
 }
 
 .entry-calendar-day.is-today {
-  box-shadow: inset 0 0 0 2px #0ea5e9;
+  box-shadow: inset 0 0 0 2px #d07a3f;
 }
 
 .entry-calendar-day.is-selected {
-  border-color: #0369a1;
-  background: #e0f2fe;
+  border-color: #a34f22;
+  background: #fff2e5;
 }
 
 .entry-calendar-day:hover {
-  border-color: #0ea5e9;
+  border-color: #bf8f62;
 }
 
 .entry-calendar-legend {

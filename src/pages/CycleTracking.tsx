@@ -76,18 +76,27 @@ function CycleTracking({ setPage: setAppPage }) {
   }
 
   return (
-    <div>
-      <div className="top-nav cycle-top-nav">
-        <button className="top-nav-btn" onClick={() => setAppPage?.("home")}>App Home</button>
-        <button className={`top-nav-btn ${page === "home" ? "is-active" : ""}`} onClick={() => setPage("home")}>Cycle Home</button>
-        <button className={`top-nav-btn ${page === "add" ? "is-active" : ""}`} onClick={() => setPage("add")}>Daily Entry</button>
-        <button className={`top-nav-btn ${page === "dashboard" ? "is-active" : ""}`} onClick={() => setPage("dashboard")}>Dashboard</button>
-        <button className={`top-nav-btn ${page === "statistics" ? "is-active" : ""}`} onClick={() => setPage("statistics")}>Statistics</button>
-        <button className={`top-nav-btn ${page === "allCycles" ? "is-active" : ""}`} onClick={() => setPage("allCycles")}>All Cycles</button>
+    <section className="section-shell cycle-shell">
+      <header className="section-header">
+        <div>
+          <p className="home-kicker">Cycle Workspace</p>
+          <h2>Cycle Tracking</h2>
+        </div>
+        <button type="button" className="cycle-tab-btn" onClick={() => setAppPage?.("home")}>
+          App Home
+        </button>
+      </header>
+
+      <div className="cycle-subnav" role="tablist" aria-label="Cycle sections">
+        <button className={`cycle-tab-btn ${page === "home" ? "is-active" : ""}`} onClick={() => setPage("home")}>Cycle Home</button>
+        <button className={`cycle-tab-btn ${page === "add" ? "is-active" : ""}`} onClick={() => setPage("add")}>Daily Entry</button>
+        <button className={`cycle-tab-btn ${page === "dashboard" ? "is-active" : ""}`} onClick={() => setPage("dashboard")}>Dashboard</button>
+        <button className={`cycle-tab-btn ${page === "statistics" ? "is-active" : ""}`} onClick={() => setPage("statistics")}>Statistics</button>
+        <button className={`cycle-tab-btn ${page === "allCycles" ? "is-active" : ""}`} onClick={() => setPage("allCycles")}>All Cycles</button>
       </div>
 
       {content}
-    </div>
+    </section>
   );
 }
 
