@@ -1,9 +1,7 @@
 
 import { useState } from "react";
-import PregnancyPrep from "./pages/PregnancyPrep";
+import DreamPregnancySection from "./pages/DreamPregnancySection";
 import CycleTracking from "./pages/CycleTracking";
-import AddCycleEntry from "./pages/AddCycleEntry";
-import Lifestyle from "./pages/Lifestyle";
 import {
   DEFAULT_USERNAME,
   getActiveUsername,
@@ -92,13 +90,8 @@ function HomeLanding({ goTo }) {
         </button>
 
         <button className="feature-card" onClick={() => goTo("pregnancy")}>
-          <h2>Pregnancy Prep</h2>
-          <p>Review prep planning tools and conception-focused tracking context.</p>
-        </button>
-
-        <button className="feature-card" onClick={() => goTo("lifestyle")}>
-          <h2>Lifestyle</h2>
-          <p>Monitor supporting lifestyle factors connected to cycle and symptom trends.</p>
+          <h2>Dream Pregnancy</h2>
+          <p>Map out when you want kids, when pregnancy timing would need to happen, and what prep steps fit that plan.</p>
         </button>
       </div>
     </section>
@@ -118,9 +111,8 @@ function App() {
 
   const topNavItems = [
     { key: "home", label: "Home" },
-    { key: "pregnancy", label: "Pregnancy Prep" },
-    { key: "cycle", label: "Cycle Tracking" },
-    { key: "lifestyle", label: "Lifestyle" },
+    { key: "pregnancy", label: "Dream Pregnancy" },
+    { key: "cycle", label: "Cycle" },
   ];
 
   function applyUsername() {
@@ -201,12 +193,12 @@ function App() {
       <p className="active-user-badge">Active user: {normalizeUsername(activeUsername)}</p>
 
       {page === "home" && <HomeLanding goTo={setPage} />}
-      {page === "pregnancy" && <PregnancyPrep key={`preg-${activeUsername}`} username={activeUsername} />}
+      {page === "pregnancy" && (
+        <DreamPregnancySection key={`preg-${activeUsername}`} username={activeUsername} />
+      )}
       {page === "cycle" && (
         <CycleTracking key={`cycle-${activeUsername}`} setPage={setPage} username={activeUsername} />
       )}
-      {page === "addEntry" && <AddCycleEntry />}
-      {page === "lifestyle" && <Lifestyle key={`life-${activeUsername}`} username={activeUsername} />}
     </div>
   );
 }

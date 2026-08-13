@@ -1,16 +1,55 @@
-# React + Vite
+# Personal Health Tracker
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A cycle, pregnancy prep, and lifestyle tracking workspace with:
 
-Currently, two official plugins are available:
+- daily cycle entry logging
+- dashboard and statistics views
+- cycle phase and due-date estimate helpers
+- goal tracking for pregnancy prep and lifestyle habits
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Project Structure
 
-## React Compiler
+- `src/` React frontend (Vite)
+- `backend/` Python (Flask) + SQLite API
+- `backend/schema.sql` database schema
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Run The App
 
-## Expanding the ESLint configuration
+1. Install frontend dependencies:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm install
+```
+
+2. Install backend dependencies:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install -r backend/requirements.txt
+```
+
+3. Start backend API (port 3000):
+
+```bash
+./.venv/bin/python backend/server.py
+```
+
+4. Start frontend (Vite dev server):
+
+```bash
+npm run dev
+```
+
+## API Endpoints Used By Frontend
+
+- `GET /api/cycle?username=...`
+- `GET /api/cycle/:date?username=...`
+- `POST /api/cycle`
+- `GET /api/goals?username=...&category=...`
+- `PUT /api/goals`
+
+## Notes
+
+- User-specific data is selected by username.
+- Frontend assumes backend is available at `http://localhost:3000`.
+- Future-date cycle entries are intentionally rejected by backend validation.

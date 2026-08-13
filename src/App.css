@@ -190,6 +190,28 @@
   margin-bottom: 14px;
 }
 
+.cycle-home {
+  display: grid;
+  gap: 14px;
+}
+
+.cycle-home-hero {
+  border: 1px solid #e0cfbd;
+  border-radius: 16px;
+  padding: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(255, 186, 124, 0.24) 0, rgba(255, 186, 124, 0) 42%),
+    linear-gradient(135deg, #fffaf3 0%, #fff3e7 100%);
+  display: grid;
+  gap: 8px;
+}
+
+.cycle-home-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
 @media (max-width: 760px) {
   .top-nav,
   .cycle-top-nav {

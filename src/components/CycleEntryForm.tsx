@@ -1,4 +1,4 @@
-import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from "react";
 import { emptyCycleEntry } from "../models/cycleEntryModel";
 import "./CycleEntryForm.css";
 
@@ -23,6 +23,49 @@ const moodEmotionOptions = [
   ["mood_swings", "Mood Swings"],
   ["emotional", "Emotional"],
   ["other", "Other"],
+];
+
+const SECTION_CONFIG = [
+  {
+    id: "basics",
+    label: "Basics",
+    fields: ["username", "date", "cycleDay"],
+  },
+  {
+    id: "fertility",
+    label: "Fertility",
+    fields: [
+      "sick",
+      "wristTemp",
+      "thermometerTemp",
+      "lhMorning",
+      "lhAfternoon",
+      "lhNight",
+      "ovulationConfirmed",
+      "cmAmount",
+      "cmType",
+    ],
+  },
+  {
+    id: "flow-body-mood",
+    label: "Flow + Mood",
+    fields: ["period", "bleeding", "sexDrive", "skinStatus", "painSymptoms", "moodEmotions"],
+  },
+  {
+    id: "intercourse",
+    label: "Intercourse",
+    fields: ["intercourse", "usedProtection", "protectionType"],
+  },
+  {
+    id: "wellness",
+    label: "Wellness",
+    fields: ["pregnancyTest", "weight", "sleepDuration"],
+  },
+  {
+    id: "notes",
+    label: "Notes",
+    fields: ["notes"],
+  },
 ];
 
 function booleanToSelectValue(value) {
@@ -110,7 +153,43 @@ function isLhField(name) {
   return name === "lhMorning" || name === "lhAfternoon" || name === "lhNight";
 }
 
-function CycleEntryForm({ initialEntry }, ref) {
+function isIntercourseFieldApplicable(entry, fieldName) {
+  if (fieldName === "usedProtection") {
+    return entry.intercourse === true;
+  }
+
+  if (fieldName === "protectionType") {
+    return entry.intercourse === true && entry.usedProtection === true;
+  }
+
+  return true;
+}
+
+function getSectionCompletion(config, entry, sleepDuration) {
+  const relevantFields = config.fields.filter((fieldName) => {
+    if (config.id !== "intercourse") {
+      return true;
+    }
+
+    return isIntercourseFieldApplicable(entry, fieldName);
+  });
+
+  const completed = relevantFields.reduce((sum, fieldName) => {
+    if (fieldName === "sleepDuration") {
+      const sleepValue = `${sleepDuration.hours || ""}${sleepDuration.minutes || ""}`;
+      return sum + (hasValue(sleepValue) ? 1 : 0);
+    }
+
+    return sum + (hasValue(entry[fieldName]) ? 1 : 0);
+  }, 0);
+
+  return {
+    completed,
+    total: relevantFields.length,
+  };
+}
+
+function CycleEntryForm({ initialEntry, onSaved }, ref) {
   const [entry, setEntry] = useState(emptyCycleEntry);
   const [saveState, setSaveState] = useState("idle");
   const [saveMessage, setSaveMessage] = useState("");
@@ -118,6 +197,7 @@ function CycleEntryForm({ initialEntry }, ref) {
     hours: "",
     minutes: "",
   });
+  const sectionRefs = useRef({});
 
   function toggleMultiValue(fieldName, optionValue, isChecked) {
     setEntry((previousEntry) => {
@@ -327,6 +407,11 @@ function CycleEntryForm({ initialEntry }, ref) {
 
       const responseData = await response.json();
 
+      let finalSavedEntry = {
+        ...entry,
+        sleepHours: sleepHoursDecimal,
+      };
+
       if (responseData?.entry) {
         const hydratedEntry = {
           ...emptyCycleEntry,
@@ -342,6 +427,7 @@ function CycleEntryForm({ initialEntry }, ref) {
         };
 
         setEntry(hydratedEntry);
+        finalSavedEntry = hydratedEntry;
 
         const decimal = Number(hydratedEntry.sleepHours);
         if (Number.isFinite(decimal) && decimal >= 0) {
@@ -364,6 +450,7 @@ function CycleEntryForm({ initialEntry }, ref) {
 
       setSaveState("saved");
       setSaveMessage("Saved. Derived values are refreshed.");
+      onSaved?.(finalSavedEntry);
       return { ok: true };
     } catch (error) {
       console.error(error);
@@ -432,6 +519,22 @@ function CycleEntryForm({ initialEntry }, ref) {
     (sleepDuration.hours || "") + (sleepDuration.minutes || "")
   );
 
+  const sectionProgress = useMemo(
+    () =>
+      SECTION_CONFIG.map((config) => ({
+        ...config,
+        progress: getSectionCompletion(config, entry, sleepDuration),
+      })),
+    [entry, sleepDuration]
+  );
+
+  function scrollToSection(sectionId) {
+    sectionRefs.current[sectionId]?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -445,9 +548,30 @@ function CycleEntryForm({ initialEntry }, ref) {
         <p>Quickly log today and save. Automatic fields update right after save.</p>
       </div>
 
+      <nav className="survey-section-nav" aria-label="Jump to form section">
+        {sectionProgress.map((section) => (
+          <button
+            key={section.id}
+            type="button"
+            className="survey-section-chip"
+            onClick={() => scrollToSection(section.id)}
+          >
+            <span>{section.label}</span>
+            <small>
+              {section.progress.completed}/{section.progress.total}
+            </small>
+          </button>
+        ))}
+      </nav>
+
       {saveMessage && <p className={saveStateClass}>{saveMessage}</p>}
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current.basics = node;
+        }}
+      >
         <h3>Basics</h3>
 
         <label className="survey-row">
@@ -487,7 +611,12 @@ function CycleEntryForm({ initialEntry }, ref) {
         </label>
       </section>
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current.fertility = node;
+        }}
+      >
         <h3>Fertility Markers</h3>
 
         <label className="survey-row">
@@ -639,7 +768,12 @@ function CycleEntryForm({ initialEntry }, ref) {
         </label>
       </section>
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current["flow-body-mood"] = node;
+        }}
+      >
         <h3>Flow, Body, and Mood</h3>
 
         <label className="survey-row">
@@ -748,7 +882,12 @@ function CycleEntryForm({ initialEntry }, ref) {
         </div>
       </section>
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current.intercourse = node;
+        }}
+      >
         <h3>Intercourse and Protection</h3>
 
         <label className="survey-row">
@@ -813,7 +952,12 @@ function CycleEntryForm({ initialEntry }, ref) {
         )}
       </section>
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current.wellness = node;
+        }}
+      >
         <h3>Wellness</h3>
 
         <label className="survey-row">
@@ -869,7 +1013,12 @@ function CycleEntryForm({ initialEntry }, ref) {
         </label>
       </section>
 
-      <section className="survey-section">
+      <section
+        className="survey-section"
+        ref={(node) => {
+          sectionRefs.current.notes = node;
+        }}
+      >
         <h3>Notes</h3>
 
         <label className="survey-row survey-row-top">

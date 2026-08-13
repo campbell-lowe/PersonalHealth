@@ -138,6 +138,17 @@
   font: inherit;
 }
 
+.planner-grid input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.planner-grid input[type="number"]::-webkit-outer-spin-button,
+.planner-grid input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .planner-card textarea {
   min-height: 90px;
   resize: vertical;
@@ -155,6 +166,204 @@
 .planner-note-box p {
   margin: 0;
   color: #675b52;
+}
+
+.dream-page-shell {
+  gap: 16px;
+}
+
+.dream-board-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.25fr);
+  gap: 14px;
+}
+
+.dream-board-grid-planning {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dream-hero-card {
+  overflow: hidden;
+  position: relative;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 213, 126, 0.45) 0, rgba(255, 213, 126, 0) 22%),
+    radial-gradient(circle at 88% 20%, rgba(255, 171, 145, 0.3) 0, rgba(255, 171, 145, 0) 26%),
+    linear-gradient(135deg, #fff7ef 0%, #fff0f4 48%, #fff9e8 100%);
+}
+
+.dream-hero-card h1,
+.dream-scenario-card h2,
+.dream-vision-card h2,
+.dream-milestone-card h2,
+.dream-board-panel h2,
+.dream-overview-board h2 {
+  letter-spacing: 0.01em;
+}
+
+.dream-board-header {
+  display: grid;
+  gap: 2px;
+}
+
+.dream-board-header h2 {
+  margin: 0;
+}
+
+.dream-picture-board {
+  align-content: start;
+}
+
+.dream-overview-board {
+  align-content: start;
+  background: linear-gradient(135deg, #fffdfa 0%, #fff6ef 100%);
+}
+
+.dream-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dream-overview-item {
+  border: 1px solid #efdfd0;
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  display: grid;
+  gap: 4px;
+}
+
+.dream-overview-item h3 {
+  margin: 0;
+  color: #5f3018;
+}
+
+.dream-board-panel {
+  align-content: start;
+}
+
+.dream-vibe-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.dream-vibe-chip {
+  border: 1px solid #dfb39c;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #744126;
+  padding: 9px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.dream-vibe-chip:hover,
+.dream-vibe-chip.is-active {
+  transform: translateY(-1px);
+  border-color: #c77758;
+  box-shadow: 0 10px 22px rgba(188, 103, 64, 0.16);
+}
+
+.dream-vibe-chip.is-active {
+  background: linear-gradient(135deg, #fff0d8 0%, #ffe7ef 100%);
+}
+
+.dream-grid-hero {
+  align-items: stretch;
+}
+
+.dream-spotlight-card {
+  background: linear-gradient(135deg, #fff7df 0%, #fff1f7 100%);
+}
+
+.dream-mini-label {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: #a45c39;
+}
+
+.dream-value-small {
+  font-size: 1.45rem;
+}
+
+.dream-timing-box {
+  background: linear-gradient(135deg, #fffdf8 0%, #fff8f1 48%, #fffaf6 100%);
+}
+
+.dream-milestone-card {
+  background: linear-gradient(180deg, #ffffff 0%, #fffaf5 100%);
+}
+
+.dream-scenario-card {
+  gap: 14px;
+  background: linear-gradient(135deg, #fffaf4 0%, #fff3ef 55%, #fffdf7 100%);
+}
+
+.dream-plan-card {
+  gap: 14px;
+  background: linear-gradient(135deg, #fdf7ff 0%, #fff9f4 52%, #fffef8 100%);
+}
+
+.dream-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.dream-scenario-pill {
+  border: 1px solid #ecd5c5;
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  display: grid;
+  gap: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.dream-scenario-pill h3 {
+  margin: 0;
+  color: #6f341b;
+}
+
+.dream-scenario-pill p {
+  margin: 0;
+  color: #69574a;
+}
+
+.dream-scenario-pill.is-match {
+  border-color: #d8b48a;
+  background: linear-gradient(180deg, rgba(255, 252, 245, 0.98) 0%, rgba(255, 245, 234, 0.95) 100%);
+}
+
+.dream-scenario-pill.is-tight {
+  border-color: #eadfd5;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(251, 246, 242, 0.9) 100%);
+}
+
+.dream-vision-card {
+  gap: 12px;
+}
+
+.dream-vision-card label,
+.dream-scenario-card,
+.dream-milestone-card {
+  color: #5f4c42;
+}
+
+.dream-textarea,
+.dream-vision-card textarea {
+  border: 1px solid #d6c4b3;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  min-height: 120px;
+  resize: vertical;
 }
 
 .sleep-pull-card {
@@ -182,7 +391,11 @@
 
 @media (max-width: 900px) {
   .wellness-grid-2,
-  .wellness-grid-3 {
+  .wellness-grid-3,
+  .dream-scenario-grid,
+  .dream-board-grid,
+  .dream-board-grid-planning,
+  .dream-overview-grid {
     grid-template-columns: 1fr;
   }
 
