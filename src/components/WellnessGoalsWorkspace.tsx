@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import GoalTracker from "./GoalTracker";
+import { apiUrl } from "../utils/api";
 import "../pages/WellnessPages.css";
 
 function createGoal(name) {
@@ -89,7 +90,9 @@ function WellnessGoalsWorkspace({
         setStatusMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/goals?username=${encodeURIComponent(username)}&category=${encodeURIComponent(category)}`
+          apiUrl(
+            `/api/goals?username=${encodeURIComponent(username)}&category=${encodeURIComponent(category)}`
+          )
         );
 
         if (!response.ok) {
@@ -113,7 +116,7 @@ function WellnessGoalsWorkspace({
   useEffect(() => {
     async function saveGoals() {
       try {
-        const response = await fetch("http://localhost:3000/api/goals", {
+        const response = await fetch(apiUrl("/api/goals"), {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",

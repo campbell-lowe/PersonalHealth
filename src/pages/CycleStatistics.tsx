@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getActiveUsername } from "../utils/activeUsername";
+import { apiUrl } from "../utils/api";
 
 const TEMPERATURE_SOURCES = [
   { key: "thermometer", label: "Thermometer", dataKey: "thermometerTemp", color: "#ff5d57" },
@@ -309,7 +310,7 @@ function CycleStatistics() {
         setErrorMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+          apiUrl(`/api/cycle?username=${encodeURIComponent(currentUsername)}`)
         );
 
         if (!response.ok) {

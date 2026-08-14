@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, forwardRef, useImperativeHandle } from "react";
 import { emptyCycleEntry } from "../models/cycleEntryModel";
+import { apiUrl } from "../utils/api";
 import "./CycleEntryForm.css";
 
 const painSymptomOptions = [
@@ -384,7 +385,7 @@ function CycleEntryForm({ initialEntry, onSaved }, ref) {
     };
 
     try {
-      const response = await fetch("http://localhost:3000/api/cycle", {
+      const response = await fetch(apiUrl("/api/cycle"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: personal-health-backend
+    env: python
+    rootDir: .
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: gunicorn backend.server:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: APP_ALLOWED_ORIGINS
+        sync: false
+      - key: APP_DEFAULT_USERNAME
+        sync: false
+      - key: APP_DEFAULT_PASSWORD
+        sync: false
+      - key: APP_DEMO_USERNAME
+        value: demo
+      - key: APP_DEMO_PASSWORD
+        value: demo12345
+
+  - type: static_site
+    name: personal-health-frontend
+    rootDir: .
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false

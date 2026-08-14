@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getActiveUsername } from "../utils/activeUsername";
+import { apiUrl } from "../utils/api";
 
 const OVULATION_SIGNAL_DELTA = 0.2;
 const LH_POSITIVE_THRESHOLD = 1;
@@ -3220,7 +3221,7 @@ function CycleDashboard({ onOpenDueDateEstimator = null, onOpenPhaseGuide = null
         setErrorMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+          apiUrl(`/api/cycle?username=${encodeURIComponent(currentUsername)}`)
         );
 
         if (!response.ok) {
@@ -3686,7 +3687,7 @@ export function AllCyclesChartsPage() {
         setErrorMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+          apiUrl(`/api/cycle?username=${encodeURIComponent(currentUsername)}`)
         );
 
         if (!response.ok) {

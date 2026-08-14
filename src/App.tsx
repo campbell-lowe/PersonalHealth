@@ -6,9 +6,8 @@ import {
   normalizeUsername,
   setActiveUsername as persistActiveUsername,
 } from "./utils/activeUsername";
+import { apiUrl } from "./utils/api";
 import "./App.css";
-
-const API_BASE_URL = "http://localhost:3000";
 
 function LoginPage({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -31,7 +30,7 @@ function LoginPage({ onLogin }) {
     const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
 
     try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await fetch(apiUrl(endpoint), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { apiUrl } from "../utils/api";
 import "./WellnessPages.css";
 
 const DREAM_VIBES = ["Cozy winter baby", "Sunny summer baby", "Fresh start spring baby", "Golden autumn baby"];
@@ -212,7 +213,7 @@ function DreamPregnancySection({ username }) {
         setCycleLoadMessage("");
 
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(username)}`
+          apiUrl(`/api/cycle?username=${encodeURIComponent(username)}`)
         );
 
         if (!response.ok) {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CycleEntryForm from "../components/CycleEntryForm";
 import "./AddCycleEntry.css";
 import { getActiveUsername } from "../utils/activeUsername";
+import { apiUrl } from "../utils/api";
 
 const FLOW_VALUES = new Set(["light", "medium", "heavy"]);
 
@@ -186,7 +187,7 @@ async function getSuggestedCycleDay(targetDate) {
 
   try {
     const response = await fetch(
-      `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+      apiUrl(`/api/cycle?username=${encodeURIComponent(currentUsername)}`)
     );
 
     if (!response.ok) {
@@ -285,7 +286,7 @@ function AddCycleEntry() {
 
       try {
         const response = await fetch(
-          `http://localhost:3000/api/cycle?username=${encodeURIComponent(currentUsername)}`
+          apiUrl(`/api/cycle?username=${encodeURIComponent(currentUsername)}`)
         );
 
         if (!response.ok) {
@@ -352,7 +353,7 @@ function AddCycleEntry() {
       setSelectedDate(targetDate);
 
       const response = await fetch(
-        `http://localhost:3000/api/cycle/${targetDate}?username=${encodeURIComponent(currentUsername)}`
+        apiUrl(`/api/cycle/${targetDate}?username=${encodeURIComponent(currentUsername)}`)
       );
 
       if (response.ok) {

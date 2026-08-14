@@ -10,9 +10,18 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - optional until DATABASE_URL is configured
+    psycopg = None
+    dict_row = None
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "cycleTracker.db"
 SCHEMA_PATH = BASE_DIR / "schema.sql"
+DATABASE_URL = str(os.getenv("DATABASE_URL", "")).strip()
+DB_ENGINE = "postgres" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite"
 ALLOWED_CATEGORIES = {"pregnancy", "lifestyle"}
 DEFAULT_USERNAME = "campbell.lowe"
 DEFAULT_DEMO_USERNAME = "demo"
@@ -21,14 +30,79 @@ ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 goals_save_lock = Lock()
 
+
+def get_allowed_origins():
+    raw_value = str(os.getenv("APP_ALLOWED_ORIGINS", "")).strip()
+    if raw_value == "":
+        return "*"
+
+    origins = [origin.strip() for origin in raw_value.split(",") if origin.strip()]
+    return origins or "*"
+
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": get_allowed_origins()}})
 
 
-def get_connection() -> sqlite3.Connection:
+class PgCursorWrapper:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    @property
+    def rowcount(self):
+        return self._cursor.rowcount
+
+    @property
+    def lastrowid(self):
+        return None
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        return dict(row) if row else None
+
+    def fetchall(self):
+        return [dict(row) for row in self._cursor.fetchall()]
+
+
+class PgConnectionWrapper:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, query, params=()):
+        cursor = self._connection.cursor()
+        cursor.execute(query.replace("?", "%s"), params or ())
+        return PgCursorWrapper(cursor)
+
+    def commit(self):
+        self._connection.commit()
+
+    def rollback(self):
+        self._connection.rollback()
+
+    def close(self):
+        self._connection.close()
+
+
+def get_connection():
+    if DB_ENGINE == "postgres":
+        if psycopg is None:
+            raise RuntimeError(
+                "DATABASE_URL is set but psycopg is not installed. Add psycopg[binary] to requirements."
+            )
+
+        connection = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        return PgConnectionWrapper(connection)
+
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def begin_write_transaction(connection):
+    if DB_ENGINE == "postgres":
+        connection.execute("BEGIN")
+        return
+
+    connection.execute("BEGIN IMMEDIATE TRANSACTION")
 
 
 def parse_json_array(value):
@@ -501,6 +575,9 @@ def bootstrap_demo_account(connection):
 
 
 def ensure_column(connection, table_name, column_name, column_definition):
+    if DB_ENGINE != "sqlite":
+        return
+
     rows = connection.execute(f"PRAGMA table_info({table_name});").fetchall()
     has_column = any(row["name"] == column_name for row in rows)
 
@@ -513,6 +590,9 @@ def ensure_column(connection, table_name, column_name, column_definition):
 
 
 def ensure_username_date_unique_constraint(connection):
+    if DB_ENGINE != "sqlite":
+        return
+
     row = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cycle_entries';"
     ).fetchone()
@@ -627,7 +707,83 @@ def ensure_username_date_unique_constraint(connection):
     )
 
 
+def init_db_postgres():
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cycle_entries (
+                id BIGSERIAL PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT 'campbell.lowe',
+                date TEXT NOT NULL,
+                cycle_day INTEGER,
+                sick BOOLEAN DEFAULT FALSE,
+                wrist_temp DOUBLE PRECISION,
+                thermometer_temp DOUBLE PRECISION,
+                lh_morning DOUBLE PRECISION,
+                lh_afternoon DOUBLE PRECISION,
+                lh_night DOUBLE PRECISION,
+                ovulation_confirmed BOOLEAN,
+                cm_amount TEXT,
+                cm_type TEXT,
+                period BOOLEAN,
+                bleeding TEXT,
+                sex_drive TEXT,
+                skin_status TEXT,
+                pain_symptoms TEXT,
+                mood_emotions TEXT,
+                intercourse BOOLEAN,
+                used_protection BOOLEAN,
+                protection_type TEXT,
+                pregnancy_test TEXT,
+                symptoms TEXT,
+                medications TEXT,
+                weight DOUBLE PRECISION,
+                sleep_hours DOUBLE PRECISION,
+                notes TEXT,
+                UNIQUE(username, date)
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wellness_goals (
+                id BIGSERIAL PRIMARY KEY,
+                username TEXT NOT NULL,
+                category TEXT NOT NULL,
+                goal_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                completed_dates TEXT NOT NULL DEFAULT '[]',
+                position INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(username, category, goal_id)
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id BIGSERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        bootstrap_default_user(connection)
+        bootstrap_demo_account(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def init_db():
+    if DB_ENGINE == "postgres":
+        init_db_postgres()
+        return
+
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
 
     connection = get_connection()
@@ -985,11 +1141,19 @@ def create_or_update_cycle_entry():
             ),
         )
 
+        inserted_id = cursor.lastrowid
+        if inserted_id is None:
+            inserted_row = connection.execute(
+                "SELECT id FROM cycle_entries WHERE username = ? AND date = ?",
+                (username, entry_date),
+            ).fetchone()
+            inserted_id = inserted_row["id"] if inserted_row else None
+
         connection.commit()
         return send_saved_entry_response(
             username,
             entry_date,
-            {"inserted": True, "id": cursor.lastrowid},
+            {"inserted": True, "id": inserted_id},
         )
     except Exception as error:
         connection.rollback()
@@ -1074,7 +1238,7 @@ def save_goals():
         with goals_save_lock:
             connection = get_connection()
             try:
-                connection.execute("BEGIN IMMEDIATE TRANSACTION")
+                begin_write_transaction(connection)
 
                 connection.execute(
                     "DELETE FROM wellness_goals WHERE username = ? AND category = ?",
