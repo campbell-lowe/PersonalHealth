@@ -169,7 +169,7 @@
 }
 
 .dream-page-shell {
-  gap: 16px;
+  gap: 18px;
 }
 
 .dream-board-grid {
@@ -179,7 +179,11 @@
 }
 
 .dream-board-grid-planning {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dream-board-panel-wide {
+  grid-column: 1 / -1;
 }
 
 .dream-hero-card {
@@ -240,6 +244,14 @@
 
 .dream-board-panel {
   align-content: start;
+}
+
+.dream-board-panel .planner-grid {
+  gap: 12px;
+}
+
+.dream-board-panel .planner-note-box p {
+  line-height: 1.45;
 }
 
 .dream-vibe-row {
@@ -362,8 +374,12 @@
   border-radius: 10px;
   padding: 10px 12px;
   font: inherit;
-  min-height: 120px;
+  min-height: 140px;
   resize: vertical;
+}
+
+.dream-notes-grid .wellness-card h2 {
+  margin-bottom: 2px;
 }
 
 .sleep-pull-card {

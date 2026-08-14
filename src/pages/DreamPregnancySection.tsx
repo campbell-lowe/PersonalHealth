@@ -95,6 +95,7 @@ function DreamPregnancySection({ username }) {
   const [desiredArrivalMonth, setDesiredArrivalMonth] = useState(() => toMonthInputValue());
   const [preferredCycleLength, setPreferredCycleLength] = useState(28);
   const [planningNotes, setPlanningNotes] = useState("");
+  const [openNotes, setOpenNotes] = useState("");
   const [dreamVibe, setDreamVibe] = useState(DREAM_VIBES[0]);
   const [nameIdeas, setNameIdeas] = useState("");
   const [visionNotes, setVisionNotes] = useState("");
@@ -127,6 +128,9 @@ function DreamPregnancySection({ username }) {
       }
       if (typeof saved?.planningNotes === "string") {
         setPlanningNotes(saved.planningNotes);
+      }
+      if (typeof saved?.openNotes === "string") {
+        setOpenNotes(saved.openNotes);
       }
       if (typeof saved?.dreamVibe === "string" && saved.dreamVibe) {
         setDreamVibe(saved.dreamVibe);
@@ -174,6 +178,7 @@ function DreamPregnancySection({ username }) {
           planningMode,
           preferredCycleLength,
           planningNotes,
+          openNotes,
           dreamVibe,
           nameIdeas,
           visionNotes,
@@ -195,6 +200,7 @@ function DreamPregnancySection({ username }) {
     planningMode,
     preferredCycleLength,
     planningNotes,
+    openNotes,
     dreamVibe,
     nameIdeas,
     visionNotes,
@@ -414,7 +420,7 @@ function DreamPregnancySection({ username }) {
       </section>
 
       <section className="dream-board-grid dream-board-grid-planning">
-        <article className="wellness-card planner-card dream-board-panel">
+        <article className="wellness-card planner-card dream-board-panel dream-board-panel-wide">
           <div className="dream-board-header">
             <p className="dream-mini-label">Board One</p>
             <h2>Dream Timing</h2>
@@ -749,9 +755,9 @@ function DreamPregnancySection({ username }) {
         </article>
       </section>
 
-      <section className="wellness-grid-2">
+      <section className="wellness-grid-2 dream-notes-grid">
         <article className="wellness-card">
-          <h2>Life Notes</h2>
+          <h2>Practical Notes</h2>
           <textarea
             className="dream-textarea"
             value={planningNotes}
@@ -764,8 +770,8 @@ function DreamPregnancySection({ username }) {
           <h2>Open Notes</h2>
           <textarea
             className="dream-textarea"
-            value={visionNotes}
-            onChange={(event) => setVisionNotes(event.target.value)}
+            value={openNotes}
+            onChange={(event) => setOpenNotes(event.target.value)}
             placeholder="Anything else you want to capture about timing, feelings, plans, or possibilities"
           />
         </article>
