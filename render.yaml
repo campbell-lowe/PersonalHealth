@@ -23,7 +23,6 @@ services:
   - type: web
     name: personal-health-frontend
     runtime: static
-    plan: free
     rootDir: .
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
