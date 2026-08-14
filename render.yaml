@@ -1,7 +1,8 @@
 services:
   - type: web
     name: personal-health-backend
-    env: python
+    runtime: python
+    plan: free
     rootDir: .
     buildCommand: pip install -r backend/requirements.txt
     startCommand: gunicorn backend.server:app --bind 0.0.0.0:$PORT
@@ -22,6 +23,7 @@ services:
   - type: web
     name: personal-health-frontend
     runtime: static
+    plan: free
     rootDir: .
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
