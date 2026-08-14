@@ -3,57 +3,69 @@ import { useState } from "react";
 import DreamPregnancySection from "./pages/DreamPregnancySection";
 import CycleTracking from "./pages/CycleTracking";
 import {
-  DEFAULT_USERNAME,
-  getActiveUsername,
   normalizeUsername,
   setActiveUsername as persistActiveUsername,
 } from "./utils/activeUsername";
 import "./App.css";
 
-const AUTH_STORAGE_KEY = "personalhealth.auth.username";
-
-function getSavedLoginUsername() {
-  try {
-    const saved = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    const normalized = String(saved || "").trim();
-    return normalized || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveLoginUsername(username) {
-  try {
-    window.localStorage.setItem(AUTH_STORAGE_KEY, username);
-  } catch {
-    // Ignore storage write errors.
-  }
-}
-
-function clearSavedLogin() {
-  try {
-    window.localStorage.removeItem(AUTH_STORAGE_KEY);
-  } catch {
-    // Ignore storage delete errors.
-  }
-}
+const API_BASE_URL = "http://localhost:3000";
 
 function LoginPage({ onLogin }) {
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("login");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function submitLogin(event) {
+  async function submitLogin(event) {
     event.preventDefault();
-    onLogin(username);
+    setError("");
+
+    if (!username.trim() || !password.trim()) {
+      setError("Username and password are required.");
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    const endpoint = mode === "register" ? "/api/auth/register" : "/api/auth/login";
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setError(payload.error || "Authentication failed.");
+        return;
+      }
+
+      setError("");
+      onLogin(username);
+    } catch {
+      setError("Could not reach backend. Make sure the API server is running.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
     <main className="login-shell">
       <section className="login-card">
         <p className="home-kicker">Welcome</p>
-        <h1>Sign In With Username</h1>
+        <h1>Sign In</h1>
         <p className="home-subtitle">
-          Use your username to load your own cycle entries and goal trackers.
+          {mode === "register"
+            ? "Create a secure account stored in the backend database."
+            : "Sign in with credentials stored in the backend database."}
         </p>
+        {mode === "login" && (
+          <p className="login-hint">Demo account: username demo, password demo12345</p>
+        )}
 
         <form className="login-form" onSubmit={submitLogin}>
           <label htmlFor="login-username">Username</label>
@@ -65,7 +77,38 @@ function LoginPage({ onLogin }) {
             placeholder="Enter username"
             required
           />
-          <button type="submit">Enter App</button>
+
+          <label htmlFor="login-password">Password</label>
+          <input
+            id="login-password"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Enter password"
+            required
+          />
+
+          {error && <p className="login-error">{error}</p>}
+
+          <button type="submit" disabled={isSubmitting}>
+            {isSubmitting
+              ? "Please wait..."
+              : mode === "register"
+                ? "Create Account"
+                : "Enter App"}
+          </button>
+
+          <button
+            type="button"
+            className="login-secondary-btn"
+            onClick={() => {
+              setError("");
+              setMode((current) => (current === "login" ? "register" : "login"));
+            }}
+            disabled={isSubmitting}
+          >
+            {mode === "register" ? "I already have an account" : "Create a new account"}
+          </button>
         </form>
       </section>
     </main>
@@ -99,15 +142,9 @@ function HomeLanding({ goTo }) {
 }
 
 function App() {
-  const savedLoginUsername = getSavedLoginUsername();
   const [page, setPage] = useState("home");
-  const [loggedInUsername, setLoggedInUsername] = useState(savedLoginUsername);
-  const [activeUsername, setActiveUsername] = useState(() =>
-    savedLoginUsername ? normalizeUsername(savedLoginUsername) : getActiveUsername()
-  );
-  const [usernameInput, setUsernameInput] = useState(() =>
-    savedLoginUsername ? normalizeUsername(savedLoginUsername) : getActiveUsername()
-  );
+  const [loggedInUsername, setLoggedInUsername] = useState(null);
+  const [activeUsername, setActiveUsername] = useState(null);
 
   const topNavItems = [
     { key: "home", label: "Home" },
@@ -115,32 +152,13 @@ function App() {
     { key: "cycle", label: "Cycle" },
   ];
 
-  function applyUsername() {
-    const nextUsername = persistActiveUsername(usernameInput);
-    setActiveUsername(nextUsername);
-    setLoggedInUsername(nextUsername);
-    saveLoginUsername(nextUsername);
-    setUsernameInput(nextUsername);
-  }
-
-  function resetUsername() {
-    persistActiveUsername(DEFAULT_USERNAME);
-    setActiveUsername(DEFAULT_USERNAME);
-    setLoggedInUsername(DEFAULT_USERNAME);
-    saveLoginUsername(DEFAULT_USERNAME);
-    setUsernameInput(DEFAULT_USERNAME);
-  }
-
   function loginWithUsername(inputUsername) {
     const normalized = persistActiveUsername(inputUsername);
     setActiveUsername(normalized);
-    setUsernameInput(normalized);
     setLoggedInUsername(normalized);
-    saveLoginUsername(normalized);
   }
 
   function logout() {
-    clearSavedLogin();
     setLoggedInUsername(null);
     setPage("home");
   }
@@ -170,31 +188,9 @@ function App() {
           </button>
         ))}
 
-        <div className="top-nav-user-controls">
-          <label htmlFor="username-input">User</label>
-          <input
-            id="username-input"
-            type="text"
-            value={usernameInput}
-            onChange={(event) => setUsernameInput(event.target.value)}
-            onBlur={applyUsername}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                applyUsername();
-              }
-            }}
-            placeholder="username"
-          />
-          <button type="button" className="top-nav-btn" onClick={applyUsername}>
-            Switch
-          </button>
-          <button type="button" className="top-nav-btn" onClick={resetUsername}>
-            Reset
-          </button>
-          <button type="button" className="top-nav-btn" onClick={logout}>
-            Log Out
-          </button>
-        </div>
+        <button type="button" className="top-nav-btn" onClick={logout}>
+          Log Out
+        </button>
       </nav>
 
       <p className="active-user-badge">Active user: {normalizeUsername(activeUsername)}</p>

@@ -42,11 +42,31 @@ npm run dev
 
 ## API Endpoints Used By Frontend
 
+- `POST /api/auth/register`
+- `POST /api/auth/login`
 - `GET /api/cycle?username=...`
 - `GET /api/cycle/:date?username=...`
 - `POST /api/cycle`
 - `GET /api/goals?username=...&category=...`
 - `PUT /api/goals`
+
+## Optional Auth Bootstrap (Deployment)
+
+When hosting the backend, you can pre-create a login account by setting:
+
+- `APP_DEFAULT_USERNAME`
+- `APP_DEFAULT_PASSWORD`
+
+On backend startup, if that username does not exist yet, it is inserted into the `users` table with a hashed password.
+
+## Built-in Demo Account
+
+The backend auto-creates a demo account with sample cycle and goals data:
+
+- Username: `demo`
+- Password: `demo12345`
+
+This lets reviewers explore the app without using your personal account data.
 
 ## Notes
 

@@ -8,12 +8,15 @@ from threading import Lock
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "cycleTracker.db"
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 ALLOWED_CATEGORIES = {"pregnancy", "lifestyle"}
 DEFAULT_USERNAME = "campbell.lowe"
+DEFAULT_DEMO_USERNAME = "demo"
+DEFAULT_DEMO_PASSWORD = "demo12345"
 ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 goals_save_lock = Lock()
@@ -258,6 +261,245 @@ def normalize_category(value):
     return str(value or "").strip().lower()
 
 
+def normalize_auth_username(value):
+    return str(value or "").strip()
+
+
+def is_valid_password(password):
+    return isinstance(password, str) and len(password) >= 8
+
+
+def bootstrap_default_user(connection):
+    # Optional bootstrap for hosted deployments.
+    env_username = str(os.getenv("APP_DEFAULT_USERNAME", "")).strip()
+    env_password = str(os.getenv("APP_DEFAULT_PASSWORD", "")).strip()
+
+    if not env_username or not env_password:
+        return
+
+    username = normalize_username(env_username)
+
+    existing = connection.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+
+    if existing:
+        return
+
+    connection.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        (username, generate_password_hash(env_password, method="pbkdf2:sha256")),
+    )
+
+
+def bootstrap_demo_account(connection):
+    demo_username = str(os.getenv("APP_DEMO_USERNAME", DEFAULT_DEMO_USERNAME)).strip() or DEFAULT_DEMO_USERNAME
+    demo_password = str(os.getenv("APP_DEMO_PASSWORD", DEFAULT_DEMO_PASSWORD)).strip() or DEFAULT_DEMO_PASSWORD
+
+    connection.execute(
+        """
+        INSERT INTO users (username, password_hash)
+        VALUES (?, ?)
+        ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash
+        """,
+        (demo_username, generate_password_hash(demo_password, method="pbkdf2:sha256")),
+    )
+
+    has_cycle_data = connection.execute(
+        "SELECT 1 FROM cycle_entries WHERE username = ? LIMIT 1",
+        (demo_username,),
+    ).fetchone()
+
+    if not has_cycle_data:
+        sample_cycle_entries = [
+            {
+                "date": "2026-05-01",
+                "cycle_day": 1,
+                "period": 1,
+                "bleeding": "heavy",
+                "wrist_temp": 97.3,
+                "thermometer_temp": 97.5,
+                "sex_drive": "low",
+                "skin_status": "clear",
+                "sleep_hours": 7.5,
+                "notes": "Sample data: period start.",
+            },
+            {
+                "date": "2026-05-02",
+                "cycle_day": 2,
+                "period": 1,
+                "bleeding": "medium",
+                "wrist_temp": 97.2,
+                "thermometer_temp": 97.4,
+                "sex_drive": "low",
+                "skin_status": "clear",
+                "sleep_hours": 7.0,
+                "notes": "Sample data.",
+            },
+            {
+                "date": "2026-05-05",
+                "cycle_day": 5,
+                "period": 0,
+                "bleeding": "none",
+                "wrist_temp": 97.4,
+                "thermometer_temp": 97.6,
+                "lh_morning": 0.21,
+                "lh_afternoon": 0.32,
+                "lh_night": 0.28,
+                "sex_drive": "medium",
+                "skin_status": "clear",
+                "sleep_hours": 7.8,
+                "notes": "Sample data.",
+            },
+            {
+                "date": "2026-05-11",
+                "cycle_day": 11,
+                "period": 0,
+                "bleeding": "none",
+                "wrist_temp": 97.5,
+                "thermometer_temp": 97.7,
+                "lh_morning": 0.55,
+                "lh_afternoon": 0.63,
+                "lh_night": 0.59,
+                "sex_drive": "high",
+                "skin_status": "clear",
+                "sleep_hours": 8.1,
+                "notes": "Sample data: fertile window.",
+            },
+            {
+                "date": "2026-05-13",
+                "cycle_day": 13,
+                "period": 0,
+                "bleeding": "none",
+                "wrist_temp": 97.6,
+                "thermometer_temp": 97.8,
+                "lh_morning": 0.98,
+                "lh_afternoon": 1.18,
+                "lh_night": 1.05,
+                "sex_drive": "high",
+                "skin_status": "clear",
+                "sleep_hours": 7.9,
+                "notes": "Sample data: LH peak day.",
+            },
+            {
+                "date": "2026-05-14",
+                "cycle_day": 14,
+                "period": 0,
+                "bleeding": "none",
+                "wrist_temp": 97.9,
+                "thermometer_temp": 98.0,
+                "lh_morning": 0.72,
+                "lh_afternoon": 0.66,
+                "lh_night": 0.52,
+                "ovulation_confirmed": 1,
+                "sex_drive": "high",
+                "skin_status": "clear",
+                "sleep_hours": 7.4,
+                "notes": "Sample data: probable ovulation.",
+            },
+            {
+                "date": "2026-05-20",
+                "cycle_day": 20,
+                "period": 0,
+                "bleeding": "none",
+                "wrist_temp": 98.1,
+                "thermometer_temp": 98.2,
+                "sex_drive": "medium",
+                "skin_status": "clear",
+                "sleep_hours": 8.0,
+                "notes": "Sample data: luteal phase.",
+            },
+            {
+                "date": "2026-05-28",
+                "cycle_day": 28,
+                "period": 0,
+                "bleeding": "spotting",
+                "wrist_temp": 97.7,
+                "thermometer_temp": 97.8,
+                "sex_drive": "low",
+                "skin_status": "acne",
+                "sleep_hours": 6.9,
+                "notes": "Sample data: pre-period spotting.",
+            },
+        ]
+
+        insert_cycle_sql = """
+            INSERT INTO cycle_entries (
+                username,
+                date,
+                cycle_day,
+                period,
+                bleeding,
+                wrist_temp,
+                thermometer_temp,
+                lh_morning,
+                lh_afternoon,
+                lh_night,
+                ovulation_confirmed,
+                sex_drive,
+                skin_status,
+                symptoms,
+                medications,
+                sleep_hours,
+                notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+
+        for entry in sample_cycle_entries:
+            connection.execute(
+                insert_cycle_sql,
+                (
+                    demo_username,
+                    entry["date"],
+                    entry.get("cycle_day"),
+                    entry.get("period"),
+                    entry.get("bleeding"),
+                    entry.get("wrist_temp"),
+                    entry.get("thermometer_temp"),
+                    entry.get("lh_morning"),
+                    entry.get("lh_afternoon"),
+                    entry.get("lh_night"),
+                    entry.get("ovulation_confirmed"),
+                    entry.get("sex_drive"),
+                    entry.get("skin_status"),
+                    json.dumps([]),
+                    json.dumps([]),
+                    entry.get("sleep_hours"),
+                    entry.get("notes"),
+                ),
+            )
+
+    has_goal_data = connection.execute(
+        "SELECT 1 FROM wellness_goals WHERE username = ? LIMIT 1",
+        (demo_username,),
+    ).fetchone()
+
+    if not has_goal_data:
+        sample_goals = [
+            (demo_username, "pregnancy", "prenatal-vitamin", "Take prenatal vitamin", ["2026-05-03", "2026-05-04"], 0),
+            (demo_username, "pregnancy", "hydrate", "Hydrate (8 cups)", ["2026-05-03"], 1),
+            (demo_username, "lifestyle", "walk", "30-minute walk", ["2026-05-02", "2026-05-05"], 0),
+            (demo_username, "lifestyle", "sleep", "Sleep before 11 PM", ["2026-05-01", "2026-05-02"], 1),
+        ]
+
+        for username, category, goal_id, name, completed_dates, position in sample_goals:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO wellness_goals (
+                    username,
+                    category,
+                    goal_id,
+                    name,
+                    completed_dates,
+                    position
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (username, category, goal_id, name, json.dumps(completed_dates), position),
+            )
+
+
 def ensure_column(connection, table_name, column_name, column_definition):
     rows = connection.execute(f"PRAGMA table_info({table_name});").fetchall()
     has_column = any(row["name"] == column_name for row in rows)
@@ -404,6 +646,8 @@ def init_db():
         ensure_column(connection, "cycle_entries", "used_protection", "BOOLEAN")
         ensure_column(connection, "cycle_entries", "protection_type", "TEXT")
         ensure_username_date_unique_constraint(connection)
+        bootstrap_default_user(connection)
+        bootstrap_demo_account(connection)
 
         connection.commit()
     finally:
@@ -435,6 +679,79 @@ init_db()
 @app.get("/")
 def health_check():
     return "Backend is running!"
+
+
+@app.post("/api/auth/register")
+def register_user():
+    payload = request.get_json(silent=True) or {}
+
+    username = normalize_auth_username(payload.get("username"))
+    password = payload.get("password")
+
+    if username == "":
+        return jsonify({"error": "Username is required."}), 400
+
+    if not isinstance(password, str) or password.strip() == "":
+        return jsonify({"error": "Password is required."}), 400
+
+    if not is_valid_password(password):
+        return jsonify({"error": "Password must be at least 8 characters."}), 400
+
+    connection = get_connection()
+    try:
+        existing = connection.execute(
+            "SELECT id FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+
+        if existing:
+            return jsonify({"error": "Username already exists."}), 409
+
+        connection.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username, generate_password_hash(password, method="pbkdf2:sha256")),
+        )
+        connection.commit()
+    except Exception as error:
+        connection.rollback()
+        return jsonify({"error": str(error)}), 500
+    finally:
+        connection.close()
+
+    return jsonify({"success": True, "username": username}), 201
+
+
+@app.post("/api/auth/login")
+def login_user():
+    payload = request.get_json(silent=True) or {}
+
+    username = normalize_auth_username(payload.get("username"))
+    password = payload.get("password")
+
+    if username == "":
+        return jsonify({"error": "Username is required."}), 400
+
+    if not isinstance(password, str) or password == "":
+        return jsonify({"error": "Password is required."}), 400
+
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT password_hash FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+    finally:
+        connection.close()
+
+    if not row:
+        return jsonify({"error": "Invalid username or password."}), 401
+
+    if not check_password_hash(row["password_hash"], password):
+        return jsonify({"error": "Invalid username or password."}), 401
+
+    return jsonify({"success": True, "username": username})
 
 
 @app.get("/api/cycle")

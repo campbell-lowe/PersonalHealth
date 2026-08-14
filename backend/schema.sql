@@ -62,3 +62,10 @@ CREATE TABLE IF NOT EXISTS wellness_goals (
     position INTEGER NOT NULL DEFAULT 0,
     UNIQUE(username, category, goal_id)
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
