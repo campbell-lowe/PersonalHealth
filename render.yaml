@@ -19,8 +19,9 @@ services:
       - key: APP_DEMO_PASSWORD
         value: demo12345
 
-  - type: static_site
+  - type: web
     name: personal-health-frontend
+    runtime: static
     rootDir: .
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
