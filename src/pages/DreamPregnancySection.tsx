@@ -2,15 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { apiUrl } from "../utils/api";
 import "./WellnessPages.css";
 
-const DREAM_VIBES = ["Cozy winter baby", "Sunny summer baby", "Fresh start spring baby", "Golden autumn baby"];
-
-const DREAM_MILESTONES = [
-  "Start with the season or month that feels like your family.",
-  "Sketch backward to the likely conception window.",
-  "Leave yourself a gentle prep runway before that window.",
-  "Use your notes like a journal: money, work, travel, support, and timing.",
-];
-
 function toMonthInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -28,6 +19,14 @@ function shiftMonth(monthString, delta) {
 
 function addMonths(monthString, delta) {
   return shiftMonth(monthString, delta);
+}
+
+function monthAtAge(birthDate, age) {
+  if (!birthDate || !Number.isFinite(Number(age))) return "";
+  const date = new Date(`${birthDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setFullYear(date.getFullYear() + Number(age));
+  return toMonthFromIsoDate(date.toISOString().slice(0, 10));
 }
 
 function addDaysToIsoDate(dateString, daysToAdd) {
@@ -78,6 +77,17 @@ function formatOrdinal(value) {
   return `${value}th`;
 }
 
+function formatBabyAge(months) {
+  if (months == null) return "-";
+  if (months < 0) return "not born yet";
+
+  const years = Math.floor(months / 12);
+  const remainingMonths = months % 12;
+  const yearLabel = `${years} year${years === 1 ? "" : "s"}`;
+  const monthLabel = `${remainingMonths} month${remainingMonths === 1 ? "" : "s"}`;
+  return `${months} month${months === 1 ? "" : "s"} (${yearLabel}, ${monthLabel})`;
+}
+
 function daysSinceDate(dateString) {
   if (!dateString) return null;
   const parsed = new Date(`${dateString}T00:00:00`);
@@ -89,25 +99,46 @@ function daysSinceDate(dateString) {
   return diff >= 0 ? diff : null;
 }
 
+function createFuturePlan(id, overrides = {}) {
+  return {
+    id,
+    name: "Cruise",
+    month: shiftMonth(toMonthInputValue(), 12),
+    minimumBabyAgeMonths: 6,
+    maximumPregnancyWeeks: 24,
+    ...overrides,
+  };
+}
+
+function createBoundary(id, overrides = {}) {
+  return {
+    id,
+    name: "Insurance",
+    type: "insurance",
+    month: "2029-01",
+    maximumBabyAgeMonths: 19,
+    ...overrides,
+  };
+}
+
 function DreamPregnancySection({ username }) {
   const plannerStorageKey = `personalhealth.pregnancyPlanner.${username}`;
   const [planningMode, setPlanningMode] = useState("not-yet");
-  const [desiredArrivalMonth, setDesiredArrivalMonth] = useState(() => toMonthInputValue());
+  const [plannedConceptionMonth, setPlannedConceptionMonth] = useState(() => toMonthInputValue());
   const [preferredCycleLength, setPreferredCycleLength] = useState(28);
-  const [planningNotes, setPlanningNotes] = useState("");
-  const [openNotes, setOpenNotes] = useState("");
-  const [dreamVibe, setDreamVibe] = useState(DREAM_VIBES[0]);
-  const [nameIdeas, setNameIdeas] = useState("");
-  const [visionNotes, setVisionNotes] = useState("");
   const [desiredKidCount, setDesiredKidCount] = useState(2);
-  const [ageGapMonths, setAgeGapMonths] = useState(14);
+  const [ageGapsMonths, setAgeGapsMonths] = useState([14]);
+  const [birthDate, setBirthDate] = useState("");
+  const [finalBabyAgeLimit, setFinalBabyAgeLimit] = useState(30);
   const [latestFinalBabyMonth, setLatestFinalBabyMonth] = useState("2028-12");
-  const [futurePlanName, setFuturePlanName] = useState("Cruise");
-  const [futurePlanMonth, setFuturePlanMonth] = useState(shiftMonth(toMonthInputValue(), 12));
-  const [minimumBabyAgeMonths, setMinimumBabyAgeMonths] = useState(6);
-  const [maximumPregnancyWeeks, setMaximumPregnancyWeeks] = useState(24);
+  const [futurePlans, setFuturePlans] = useState(() => [createFuturePlan("plan-1")]);
+  const [draggedPlanId, setDraggedPlanId] = useState(null);
+  const [boundaries, setBoundaries] = useState(() => [createBoundary("boundary-1")]);
+  const [draggedBoundaryId, setDraggedBoundaryId] = useState(null);
   const [cycleEntries, setCycleEntries] = useState([]);
   const [cycleLoadMessage, setCycleLoadMessage] = useState("");
+  const [isPlannerHydrated, setIsPlannerHydrated] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
 
   useEffect(() => {
     try {
@@ -118,99 +149,122 @@ function DreamPregnancySection({ username }) {
       if (saved?.planningMode === "ttc" || saved?.planningMode === "not-yet") {
         setPlanningMode(saved.planningMode);
       }
-      if (typeof saved?.desiredArrivalMonth === "string" && saved.desiredArrivalMonth) {
-        setDesiredArrivalMonth(saved.desiredArrivalMonth);
+      if (typeof saved?.plannedConceptionMonth === "string" && saved.plannedConceptionMonth) {
+        setPlannedConceptionMonth(saved.plannedConceptionMonth);
+      } else if (typeof saved?.desiredConceptionMonth === "string" && saved.desiredConceptionMonth) {
+        setPlannedConceptionMonth(saved.desiredConceptionMonth);
       } else if (typeof saved?.targetMonth === "string" && saved.targetMonth) {
-        setDesiredArrivalMonth(saved.targetMonth);
+        setPlannedConceptionMonth(shiftMonth(saved.targetMonth, -9));
+      } else if (typeof saved?.desiredArrivalMonth === "string" && saved.desiredArrivalMonth) {
+        setPlannedConceptionMonth(shiftMonth(saved.desiredArrivalMonth, -9));
       }
       if (Number.isFinite(Number(saved?.preferredCycleLength))) {
         setPreferredCycleLength(Math.max(21, Math.min(40, Number(saved.preferredCycleLength))));
       }
-      if (typeof saved?.planningNotes === "string") {
-        setPlanningNotes(saved.planningNotes);
+      if (typeof saved?.birthDate === "string") {
+        setBirthDate(saved.birthDate);
       }
-      if (typeof saved?.openNotes === "string") {
-        setOpenNotes(saved.openNotes);
-      }
-      if (typeof saved?.dreamVibe === "string" && saved.dreamVibe) {
-        setDreamVibe(saved.dreamVibe);
-      }
-      if (typeof saved?.nameIdeas === "string") {
-        setNameIdeas(saved.nameIdeas);
-      }
-      if (typeof saved?.visionNotes === "string") {
-        setVisionNotes(saved.visionNotes);
+      if (Number.isFinite(Number(saved?.finalBabyAgeLimit))) {
+        setFinalBabyAgeLimit(Math.max(18, Math.min(60, Number(saved.finalBabyAgeLimit))));
       }
       if (Number.isFinite(Number(saved?.desiredKidCount))) {
         setDesiredKidCount(Math.max(1, Math.min(6, Number(saved.desiredKidCount))));
       }
-      if (Number.isFinite(Number(saved?.ageGapMonths))) {
-        setAgeGapMonths(Math.max(9, Math.min(60, Number(saved.ageGapMonths))));
+      if (Array.isArray(saved?.ageGapsMonths) && saved.ageGapsMonths.length > 0) {
+        setAgeGapsMonths(saved.ageGapsMonths.map((gap) => Math.max(9, Math.min(60, Number(gap) || 14))));
+      } else if (Number.isFinite(Number(saved?.ageGapMonths))) {
+        setAgeGapsMonths([Math.max(9, Math.min(60, Number(saved.ageGapMonths)))]);
       }
       if (typeof saved?.latestFinalBabyMonth === "string" && saved.latestFinalBabyMonth) {
         setLatestFinalBabyMonth(saved.latestFinalBabyMonth);
       } else if (typeof saved?.latestSecondBabyMonth === "string" && saved.latestSecondBabyMonth) {
         setLatestFinalBabyMonth(saved.latestSecondBabyMonth);
       }
-      if (typeof saved?.futurePlanName === "string" && saved.futurePlanName) {
-        setFuturePlanName(saved.futurePlanName);
+      if (Array.isArray(saved?.futurePlans) && saved.futurePlans.length > 0) {
+        setFuturePlans(
+          saved.futurePlans.map((plan, index) =>
+            createFuturePlan(`plan-${index + 1}`, {
+              id: typeof plan?.id === "string" && plan.id ? plan.id : `plan-${index + 1}`,
+              name: typeof plan?.name === "string" ? plan.name : "Future plan",
+              month: typeof plan?.month === "string" ? plan.month : shiftMonth(toMonthInputValue(), 12),
+              minimumBabyAgeMonths: Math.max(0, Math.min(36, Number(plan?.minimumBabyAgeMonths) || 0)),
+              maximumPregnancyWeeks: Math.max(0, Math.min(40, Number(plan?.maximumPregnancyWeeks) || 0)),
+            })
+          )
+        );
+      } else {
+        setFuturePlans([
+          createFuturePlan("plan-1", {
+            name: typeof saved?.futurePlanName === "string" && saved.futurePlanName ? saved.futurePlanName : "Cruise",
+            month: typeof saved?.futurePlanMonth === "string" && saved.futurePlanMonth ? saved.futurePlanMonth : shiftMonth(toMonthInputValue(), 12),
+            minimumBabyAgeMonths: Number.isFinite(Number(saved?.minimumBabyAgeMonths)) ? Math.max(0, Math.min(36, Number(saved.minimumBabyAgeMonths))) : 6,
+            maximumPregnancyWeeks: Number.isFinite(Number(saved?.maximumPregnancyWeeks)) ? Math.max(0, Math.min(40, Number(saved.maximumPregnancyWeeks))) : 24,
+          }),
+        ]);
       }
-      if (typeof saved?.futurePlanMonth === "string" && saved.futurePlanMonth) {
-        setFuturePlanMonth(saved.futurePlanMonth);
-      }
-      if (Number.isFinite(Number(saved?.minimumBabyAgeMonths))) {
-        setMinimumBabyAgeMonths(Math.max(0, Math.min(36, Number(saved.minimumBabyAgeMonths))));
-      }
-      if (Number.isFinite(Number(saved?.maximumPregnancyWeeks))) {
-        setMaximumPregnancyWeeks(Math.max(0, Math.min(40, Number(saved.maximumPregnancyWeeks))));
+      if (Array.isArray(saved?.boundaries) && saved.boundaries.length > 0) {
+        setBoundaries(
+          saved.boundaries.map((boundary, index) =>
+            createBoundary(`boundary-${index + 1}`, {
+              id: typeof boundary?.id === "string" && boundary.id ? boundary.id : `boundary-${index + 1}`,
+              name: typeof boundary?.name === "string" ? boundary.name : "Boundary",
+              type: ["insurance", "avoid-birth", "outer-deadline"].includes(boundary?.type) ? boundary.type : "insurance",
+              month: typeof boundary?.month === "string" ? boundary.month : "2029-01",
+              maximumBabyAgeMonths: Math.max(0, Math.min(240, Number(boundary?.maximumBabyAgeMonths) || 0)),
+            })
+          )
+        );
       }
     } catch {
       // Ignore invalid saved planner data.
+    } finally {
+      setIsPlannerHydrated(true);
     }
   }, [plannerStorageKey]);
 
-  useEffect(() => {
+  const plannerSnapshot = {
+    plannedConceptionMonth,
+    planningMode,
+    preferredCycleLength,
+    birthDate,
+    finalBabyAgeLimit,
+    desiredKidCount,
+    ageGapsMonths,
+    latestFinalBabyMonth,
+    futurePlans,
+    boundaries,
+  };
+
+  function savePlanner() {
     try {
-      window.localStorage.setItem(
-        plannerStorageKey,
-        JSON.stringify({
-          desiredArrivalMonth,
-          planningMode,
-          preferredCycleLength,
-          planningNotes,
-          openNotes,
-          dreamVibe,
-          nameIdeas,
-          visionNotes,
-          desiredKidCount,
-          ageGapMonths,
-          latestFinalBabyMonth,
-          futurePlanName,
-          futurePlanMonth,
-          minimumBabyAgeMonths,
-          maximumPregnancyWeeks,
-        })
-      );
+      window.localStorage.setItem(plannerStorageKey, JSON.stringify(plannerSnapshot));
+      setSaveMessage("Saved");
+    } catch {
+      setSaveMessage("Could not save");
+    }
+  }
+
+  useEffect(() => {
+    if (!isPlannerHydrated) return;
+
+    try {
+      window.localStorage.setItem(plannerStorageKey, JSON.stringify(plannerSnapshot));
     } catch {
       // Ignore storage write errors.
     }
   }, [
     plannerStorageKey,
-    desiredArrivalMonth,
+    plannedConceptionMonth,
     planningMode,
     preferredCycleLength,
-    planningNotes,
-    openNotes,
-    dreamVibe,
-    nameIdeas,
-    visionNotes,
+    birthDate,
+    finalBabyAgeLimit,
     desiredKidCount,
-    ageGapMonths,
+    ageGapsMonths,
     latestFinalBabyMonth,
-    futurePlanName,
-    futurePlanMonth,
-    minimumBabyAgeMonths,
-    maximumPregnancyWeeks,
+    futurePlans,
+    boundaries,
+    isPlannerHydrated,
   ]);
 
   useEffect(() => {
@@ -242,7 +296,7 @@ function DreamPregnancySection({ username }) {
     loadCycleEntries();
   }, [username]);
 
-  const estimatedConceptionMonth = shiftMonth(desiredArrivalMonth, -9);
+  const estimatedConceptionMonth = plannedConceptionMonth;
   const currentCycleProjection = useMemo(() => {
     if (!Array.isArray(cycleEntries) || cycleEntries.length === 0) {
       return {
@@ -286,67 +340,180 @@ function DreamPregnancySection({ username }) {
   const suggestedFocusedTrackingMonth = shiftMonth(estimatedConceptionMonth, -1);
   const suggestedOvulationDay = Math.max(10, preferredCycleLength - 14);
   const familyTimeline = useMemo(
-    () =>
-      Array.from({ length: desiredKidCount }, (_, index) => {
+    () => Array.from({ length: desiredKidCount }, (_, index) => {
+        const totalGapMonths = ageGapsMonths.slice(0, index).reduce(
+          (total, gap) => total + (gap || ageGapsMonths[0] || 14),
+          0
+        );
+        const arrivalMonth = addMonths(currentCycleArrivalMonth, totalGapMonths);
         const childNumber = index + 1;
-        const arrivalMonth = addMonths(currentCycleArrivalMonth, index * ageGapMonths);
         const conceptionMonth = addMonths(arrivalMonth, -9);
 
-        return {
-          childNumber,
-          arrivalMonth,
-          conceptionMonth,
-        };
+        return { childNumber, arrivalMonth, conceptionMonth };
       }),
-    [currentCycleArrivalMonth, desiredKidCount, ageGapMonths]
+    [currentCycleArrivalMonth, desiredKidCount, ageGapsMonths]
   );
   const finalPlannedBaby = familyTimeline[familyTimeline.length - 1] || null;
+  const familyDeadlineMonth = monthAtAge(birthDate, finalBabyAgeLimit) || latestFinalBabyMonth;
   const deadlineCushionMonths = finalPlannedBaby
-    ? monthDistance(finalPlannedBaby.arrivalMonth, latestFinalBabyMonth)
+    ? monthDistance(finalPlannedBaby.arrivalMonth, familyDeadlineMonth)
     : null;
-  const latestFinalBabyConceptionMonth = addMonths(latestFinalBabyMonth, -9);
-  const futurePlanChecks = useMemo(
+  const latestFinalBabyConceptionMonth = addMonths(familyDeadlineMonth, -9);
+  const futurePlanAnalyses = useMemo(
     () =>
-      familyTimeline.map((child) => {
-        const monthsAfterArrival = monthDistance(child.arrivalMonth, futurePlanMonth);
-        const monthsAfterConception = monthDistance(child.conceptionMonth, futurePlanMonth);
-        const isDuringPregnancy =
-          monthsAfterConception != null && monthsAfterConception >= 0 && monthsAfterArrival != null && monthsAfterArrival <= 0;
-        const pregnancyWeeksAtPlan = isDuringPregnancy ? weeksFromMonths(monthsAfterConception) : null;
-        const worksWithBabyAge = monthsAfterArrival != null && monthsAfterArrival >= minimumBabyAgeMonths;
-        const worksWithPregnancy =
-          pregnancyWeeksAtPlan != null && pregnancyWeeksAtPlan >= 0 && pregnancyWeeksAtPlan <= maximumPregnancyWeeks;
+      futurePlans.map((plan) => {
+        const checks = familyTimeline.map((child) => {
+          const monthsAfterArrival = monthDistance(child.arrivalMonth, plan.month);
+          const monthsAfterConception = monthDistance(child.conceptionMonth, plan.month);
+          const isDuringPregnancy =
+            monthsAfterConception != null && monthsAfterConception >= 0 && monthsAfterArrival != null && monthsAfterArrival <= 0;
+          const pregnancyWeeksAtPlan = isDuringPregnancy ? weeksFromMonths(monthsAfterConception) : null;
+          const worksWithBabyAge = monthsAfterArrival != null && monthsAfterArrival >= plan.minimumBabyAgeMonths;
+          const worksWithPregnancy =
+            pregnancyWeeksAtPlan != null && pregnancyWeeksAtPlan >= 0 && pregnancyWeeksAtPlan <= plan.maximumPregnancyWeeks;
+          const isBeforeConception = monthsAfterConception != null && monthsAfterConception < 0;
 
-        let summary = "This timing misses both of those guideposts.";
-        if (worksWithBabyAge && worksWithPregnancy) {
-          summary = "This timing works whether you imagine going with a baby or while pregnant.";
-        } else if (worksWithBabyAge) {
-          summary = `This works if you want baby #${child.childNumber} to be at least ${minimumBabyAgeMonths} months old.`;
-        } else if (worksWithPregnancy) {
-          summary = `This works if you would rather still be pregnant and stay within about ${maximumPregnancyWeeks} weeks.`;
-        }
+          let summary = "This timing misses both of those guideposts.";
+          if (worksWithBabyAge && worksWithPregnancy) {
+            summary = "This timing works whether you imagine going with a baby or while pregnant.";
+          } else if (worksWithBabyAge) {
+            summary = plan.minimumBabyAgeMonths === 0
+              ? `This works because baby #${child.childNumber} is already here.`
+              : `This works if you want baby #${child.childNumber} to be at least ${plan.minimumBabyAgeMonths} months old.`;
+          } else if (worksWithPregnancy) {
+            summary = `This works if you would rather still be pregnant and stay within about ${plan.maximumPregnancyWeeks} weeks.`;
+          } else if (isBeforeConception) {
+            summary = `This plan happens before baby #${child.childNumber} would be conceived, so it does not constrain that timing.`;
+          }
+
+          return {
+            ...child,
+            monthsAfterArrival,
+            pregnancyWeeksAtPlan,
+            worksWithBabyAge,
+            worksWithPregnancy,
+            isBeforeConception,
+            summary,
+          };
+        });
+        const matches = checks.filter(
+          (item) => item.worksWithBabyAge || item.worksWithPregnancy || item.isBeforeConception
+        );
 
         return {
-          ...child,
-          monthsAfterArrival,
-          pregnancyWeeksAtPlan,
-          worksWithBabyAge,
-          worksWithPregnancy,
-          summary,
+          ...plan,
+          checks,
+          matches,
+          worksForAllBabies: checks.length > 0 && matches.length === checks.length,
         };
       }),
-    [familyTimeline, futurePlanMonth, minimumBabyAgeMonths, maximumPregnancyWeeks]
+    [familyTimeline, futurePlans]
   );
-  const futurePlanMatches = futurePlanChecks.filter((item) => item.worksWithBabyAge || item.worksWithPregnancy);
-  const arrivalDateLabel = useMemo(() => {
-    if (!desiredArrivalMonth) return "your dream timing";
-    return formatMonthLabel(desiredArrivalMonth);
-  }, [desiredArrivalMonth]);
+  const primaryFuturePlan = futurePlanAnalyses[0] || null;
+  const futurePlanName = primaryFuturePlan?.name || "Future plan";
+  const futurePlanMonth = primaryFuturePlan?.month || "";
+  const futurePlanWorksForAllBabies = primaryFuturePlan?.worksForAllBabies || false;
+  const updateFuturePlan = (planId, field, value) => {
+    setFuturePlans((plans) => plans.map((plan) => (plan.id === planId ? { ...plan, [field]: value } : plan)));
+  };
+  const addFuturePlan = () => {
+    setFuturePlans((plans) => [
+      ...plans,
+      createFuturePlan(`plan-${Date.now()}`, { name: `Plan ${plans.length + 1}` }),
+    ]);
+  };
+  const removeFuturePlan = (planId) => {
+    setFuturePlans((plans) => (plans.length === 1 ? plans : plans.filter((plan) => plan.id !== planId)));
+  };
+  const moveFuturePlan = (sourceId, targetId) => {
+    if (!sourceId || sourceId === targetId) return;
+    setFuturePlans((plans) => {
+      const sourceIndex = plans.findIndex((plan) => plan.id === sourceId);
+      const targetIndex = plans.findIndex((plan) => plan.id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0) return plans;
+      const reordered = [...plans];
+      const [movedPlan] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetIndex, 0, movedPlan);
+      return reordered;
+    });
+  };
+  const boundaryAnalyses = useMemo(
+    () => boundaries.map((boundary) => {
+      const checks = familyTimeline.map((child) => {
+        const monthsAtExpiration = monthDistance(child.arrivalMonth, boundary.month);
+        const appliesToChild = monthsAtExpiration != null && (boundary.type !== "insurance" || monthsAtExpiration >= 0);
+        const isApproved = boundary.type === "avoid-birth"
+          ? child.arrivalMonth !== boundary.month
+          : boundary.type === "outer-deadline"
+            ? monthsAtExpiration != null && monthsAtExpiration >= 0
+            : appliesToChild && monthsAtExpiration < boundary.maximumBabyAgeMonths;
+        return { ...child, monthsAtExpiration, appliesToChild, isApproved };
+      });
+      const applicableChecks = checks.filter((check) => check.appliesToChild);
+      return {
+        ...boundary,
+        checks,
+        worksForAllBabies: applicableChecks.every((check) => check.isApproved),
+      };
+    }),
+    [boundaries, familyTimeline]
+  );
+  const updateBoundary = (boundaryId, field, value) => {
+    setBoundaries((items) => items.map((boundary) => boundary.id === boundaryId ? { ...boundary, [field]: value } : boundary));
+  };
+  const addBoundary = () => {
+    setBoundaries((items) => [...items, createBoundary(`boundary-${Date.now()}`, { name: `Boundary ${items.length + 1}` })]);
+  };
+  const removeBoundary = (boundaryId) => {
+    setBoundaries((items) => items.length === 1 ? items : items.filter((boundary) => boundary.id !== boundaryId));
+  };
+  const moveBoundary = (sourceId, targetId) => {
+    if (!sourceId || sourceId === targetId) return;
+    setBoundaries((items) => {
+      const sourceIndex = items.findIndex((boundary) => boundary.id === sourceId);
+      const targetIndex = items.findIndex((boundary) => boundary.id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0) return items;
+      const reordered = [...items];
+      const [movedBoundary] = reordered.splice(sourceIndex, 1);
+      reordered.splice(targetIndex, 0, movedBoundary);
+      return reordered;
+    });
+  };
+  const approvalTimeline = useMemo(
+    () => familyTimeline.map((child) => ({
+      ...child,
+      decisions: [
+        ...futurePlanAnalyses.map((plan) => {
+          const check = plan.checks.find((item) => item.childNumber === child.childNumber);
+          return {
+            id: `${plan.id}-${child.childNumber}`,
+            label: plan.name || "Future plan",
+            month: plan.month,
+            approved: Boolean(check && (check.worksWithBabyAge || check.worksWithPregnancy || check.isBeforeConception)),
+          };
+        }),
+        ...boundaryAnalyses.map((boundary) => {
+          const check = boundary.checks.find((item) => item.childNumber === child.childNumber);
+          return {
+            id: `${boundary.id}-${child.childNumber}`,
+            label: boundary.name || "Boundary",
+            month: boundary.month,
+            approved: Boolean(check && (!check.appliesToChild || check.isApproved)),
+          };
+        }),
+      ],
+    })),
+    [familyTimeline, futurePlanAnalyses, boundaryAnalyses]
+  );
+  const plannedConceptionLabel = useMemo(() => {
+    if (!plannedConceptionMonth) return "your planned conception timing";
+    return formatMonthLabel(plannedConceptionMonth);
+  }, [plannedConceptionMonth]);
   const overviewBoardItems = [
     {
-      label: "Dream arrival",
-      value: arrivalDateLabel,
-      detail: "The chapter you are sketching toward right now.",
+      label: "Planned conception",
+      value: plannedConceptionLabel,
+      detail: "The starting point for the family timeline.",
     },
     {
       label: "Conception window",
@@ -372,35 +539,19 @@ function DreamPregnancySection({ username }) {
     <div className="wellness-page-shell dream-page-shell">
       <section className="wellness-hero-card dream-hero-card">
         <p className="wellness-kicker">Family Planning Section</p>
-        <h1>Dream Pregnancy</h1>
+        <h1>Family Planning</h1>
         <p>
-          Treat this like a life sketchbook. Pick the timing that feels right, play with the shape of your
-          future family, and keep the practical details beside the dreamy ones.
+          Plan the timing and shape of your future family, then test how each child and future plan fit together.
         </p>
-
-        <div className="dream-vibe-row" role="group" aria-label="Dream vibe choices">
-          {DREAM_VIBES.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className={`dream-vibe-chip ${dreamVibe === option ? "is-active" : ""}`}
-              onClick={() => setDreamVibe(option)}
-            >
-              {option}
-            </button>
-          ))}
+        <div className="planner-save-row">
+          <button type="button" className="dream-secondary-button" onClick={savePlanner}>
+            Save plan
+          </button>
+          {saveMessage ? <span className="planner-save-message" role="status">{saveMessage}</span> : null}
         </div>
       </section>
 
       <section className="dream-board-grid">
-        <article className="wellness-card dream-spotlight-card dream-picture-board">
-          <p className="dream-mini-label">Today&apos;s picture</p>
-          <h2>{dreamVibe}</h2>
-          <p className="wellness-muted">
-            Right now, {arrivalDateLabel} is the chapter you are sketching toward.
-          </p>
-        </article>
-
         <article className="wellness-card dream-overview-board">
           <div className="dream-board-header">
             <p className="dream-mini-label">Overview</p>
@@ -445,11 +596,11 @@ function DreamPregnancySection({ username }) {
 
           <div className="planner-grid">
             <label>
-              If everything lined up, when would baby feel perfect?
+              Planned conception month
               <input
                 type="month"
-                value={desiredArrivalMonth}
-                onChange={(event) => setDesiredArrivalMonth(event.target.value)}
+                value={plannedConceptionMonth}
+                onChange={(event) => setPlannedConceptionMonth(event.target.value)}
               />
             </label>
 
@@ -468,10 +619,6 @@ function DreamPregnancySection({ username }) {
               />
             </label>
 
-            <label>
-              What is the vibe of this season?
-              <input type="text" value={dreamVibe} onChange={(event) => setDreamVibe(event.target.value)} />
-            </label>
           </div>
 
           <div className="planner-note-box dream-timing-box">
@@ -498,7 +645,7 @@ function DreamPregnancySection({ username }) {
                 </>
               ) : (
                 <>
-                  If you&apos;re aiming for that season, conception likely circles around <strong>{estimatedConceptionMonth || "-"}</strong>.
+                  This family timeline starts with conception around <strong>{estimatedConceptionMonth || "-"}</strong>.
                 </>
               )}
             </p>
@@ -534,25 +681,39 @@ function DreamPregnancySection({ username }) {
               />
             </label>
 
+            {Array.from({ length: Math.max(0, desiredKidCount - 1) }, (_, index) => (
+              <label key={`age-gap-${index}`}>
+                Gap between baby #{index + 1} and baby #{index + 2}
+                <input
+                  type="number"
+                  min="9"
+                  max="60"
+                  value={ageGapsMonths[index] || ageGapsMonths[0] || 14}
+                  onChange={(event) => {
+                    const nextGap = Math.max(9, Math.min(60, Number(event.target.value) || 12));
+                    setAgeGapsMonths((gaps) => {
+                      const nextGaps = [...gaps];
+                      nextGaps[index] = nextGap;
+                      return nextGaps;
+                    });
+                  }}
+                />
+              </label>
+            ))}
+
             <label>
-              What age gap feels right?
-              <input
-                type="number"
-                min="9"
-                max="60"
-                value={ageGapMonths}
-                onChange={(event) =>
-                  setAgeGapMonths(Math.max(9, Math.min(60, Number(event.target.value) || 12)))
-                }
-              />
+              Your date of birth
+              <input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} />
             </label>
 
             <label>
-              By when would you want your final baby here?
+              Latest age for your final baby
               <input
-                type="month"
-                value={latestFinalBabyMonth}
-                onChange={(event) => setLatestFinalBabyMonth(event.target.value)}
+                type="number"
+                min="18"
+                max="60"
+                value={finalBabyAgeLimit}
+                onChange={(event) => setFinalBabyAgeLimit(Math.max(18, Math.min(60, Number(event.target.value) || 30)))}
               />
             </label>
           </div>
@@ -563,12 +724,15 @@ function DreamPregnancySection({ username }) {
             </p>
             {finalPlannedBaby ? (
               <p>
-                With a {ageGapMonths}-month gap, baby #{finalPlannedBaby.childNumber} would likely arrive around <strong>{formatMonthLabel(finalPlannedBaby.arrivalMonth)}</strong>.
+                With the planned gaps, baby #{finalPlannedBaby.childNumber} would likely arrive around <strong>{formatMonthLabel(finalPlannedBaby.arrivalMonth)}</strong>.
               </p>
             ) : null}
             {finalPlannedBaby ? (
               <p>
-                To welcome baby #{finalPlannedBaby.childNumber} by <strong>{formatMonthLabel(latestFinalBabyMonth)}</strong>, conception likely needs to happen by <strong>{formatMonthLabel(latestFinalBabyConceptionMonth)}</strong>.
+                {birthDate
+                  ? <>At age {finalBabyAgeLimit}, your final-baby deadline is <strong>{formatMonthLabel(familyDeadlineMonth)}</strong>.</>
+                  : <>Set your birth date to calculate your final-baby deadline.</>}
+                {birthDate ? <> Conception likely needs to happen by <strong>{formatMonthLabel(latestFinalBabyConceptionMonth)}</strong>.</> : null}
               </p>
             ) : null}
           </div>
@@ -580,63 +744,214 @@ function DreamPregnancySection({ username }) {
             <h2>Future Plans</h2>
           </div>
 
-          <div className="planner-grid">
-            <label>
-              What future plan matters here?
-              <input type="text" value={futurePlanName} onChange={(event) => setFuturePlanName(event.target.value)} />
-            </label>
+          <div className="future-plan-toolbar">
+            <p className="wellness-muted">Add a card for each trip, event, or commitment that should shape the family timeline. Drag cards to reorder them.</p>
+            <button type="button" className="dream-secondary-button" onClick={addFuturePlan}>+ Add future plan</button>
+          </div>
 
-            <label>
-              When is that plan?
-              <input
-                type="month"
-                value={futurePlanMonth}
-                onChange={(event) => setFuturePlanMonth(event.target.value)}
-              />
-            </label>
+          <div className="future-plan-list">
+            {futurePlans.map((plan) => (
+              <article
+                className="future-plan-block"
+                key={plan.id}
+                draggable
+                onDragStart={() => setDraggedPlanId(plan.id)}
+                onDragEnd={() => setDraggedPlanId(null)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => {
+                  moveFuturePlan(draggedPlanId, plan.id);
+                  setDraggedPlanId(null);
+                }}
+              >
+                <div className="future-plan-block-header">
+                  <div>
+                    <p className="dream-mini-label">Moveable plan block</p>
+                    <h3>{plan.name || "Untitled plan"}</h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="dream-icon-button"
+                    aria-label={`Remove ${plan.name || "future plan"}`}
+                    title="Remove plan"
+                    onClick={() => removeFuturePlan(plan.id)}
+                  >
+                    ×
+                  </button>
+                </div>
 
-            <label>
-              Baby should be at least this many months old
-              <input
-                type="number"
-                min="0"
-                max="36"
-                value={minimumBabyAgeMonths}
-                onChange={(event) =>
-                  setMinimumBabyAgeMonths(Math.max(0, Math.min(36, Number(event.target.value) || 0)))
-                }
-              />
-            </label>
+                <div className="planner-grid">
+                  <label>
+                    Plan name
+                    <input
+                      type="text"
+                      value={plan.name}
+                      onChange={(event) => updateFuturePlan(plan.id, "name", event.target.value)}
+                    />
+                  </label>
 
-            <label>
-              Or no more than this many weeks pregnant
-              <input
-                type="number"
-                min="0"
-                max="40"
-                value={maximumPregnancyWeeks}
-                onChange={(event) =>
-                  setMaximumPregnancyWeeks(Math.max(0, Math.min(40, Number(event.target.value) || 0)))
-                }
-              />
-            </label>
+                  <label>
+                    When is it?
+                    <input
+                      type="month"
+                      value={plan.month}
+                      onChange={(event) => updateFuturePlan(plan.id, "month", event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Baby age minimum
+                    <input
+                      type="number"
+                      min="0"
+                      max="36"
+                      value={plan.minimumBabyAgeMonths}
+                      onChange={(event) => updateFuturePlan(plan.id, "minimumBabyAgeMonths", Math.max(0, Math.min(36, Number(event.target.value) || 0)))}
+                    />
+                  </label>
+
+                  <label>
+                    Pregnancy weeks maximum
+                    <input
+                      type="number"
+                      min="0"
+                      max="40"
+                      value={plan.maximumPregnancyWeeks}
+                      onChange={(event) => updateFuturePlan(plan.id, "maximumPregnancyWeeks", Math.max(0, Math.min(40, Number(event.target.value) || 0)))}
+                    />
+                  </label>
+                </div>
+              </article>
+            ))}
           </div>
 
           <div className="planner-note-box dream-timing-box">
             <p>
               For {futurePlanName || "that plan"} in <strong>{formatMonthLabel(futurePlanMonth)}</strong>, compare baby age and pregnancy timing against the family sketch below.
             </p>
-            {futurePlanMatches.length > 0 ? (
+            {futurePlanWorksForAllBabies ? (
               <p>
-                Right now, it fits best around <strong>baby #{futurePlanMatches[0].childNumber}</strong>.
+                Right now, this plan works for <strong>every baby in the family sketch</strong>.
               </p>
             ) : (
               <p>
-                Right now, this plan does not fit neatly. Try moving the plan, the gap, or the family size.
+                Right now, this plan does not work for every baby in the family sketch. Try moving the plan, the gap, or the family size.
               </p>
             )}
           </div>
         </article>
+      </section>
+
+      <section className="wellness-card dream-boundary-card">
+        <div className="dream-board-header">
+          <p className="dream-mini-label">Board Four</p>
+          <h2>Boundaries</h2>
+        </div>
+        <div className="future-plan-toolbar">
+          <p className="wellness-muted">Add limits like insurance expiration dates, travel cutoffs, or age-based coverage rules.</p>
+          <button type="button" className="dream-secondary-button" onClick={addBoundary}>+ Add boundary</button>
+        </div>
+
+        <div className="future-plan-list">
+          {boundaries.map((boundary) => (
+            <article
+              className="future-plan-block"
+              key={boundary.id}
+              draggable
+              onDragStart={() => setDraggedBoundaryId(boundary.id)}
+              onDragEnd={() => setDraggedBoundaryId(null)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                moveBoundary(draggedBoundaryId, boundary.id);
+                setDraggedBoundaryId(null);
+              }}
+            >
+              <div className="future-plan-block-header">
+                <div>
+                  <p className="dream-mini-label">Moveable boundary block</p>
+                  <h3>{boundary.name || "Untitled boundary"}</h3>
+                </div>
+                <button
+                  type="button"
+                  className="dream-icon-button"
+                  aria-label={`Remove ${boundary.name || "boundary"}`}
+                  title="Remove boundary"
+                  onClick={() => removeBoundary(boundary.id)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="planner-grid">
+                <label>
+                  Boundary name
+                  <input type="text" value={boundary.name} onChange={(event) => updateBoundary(boundary.id, "name", event.target.value)} />
+                </label>
+                <label>
+                  Rule type
+                  <select value={boundary.type} onChange={(event) => updateBoundary(boundary.id, "type", event.target.value)}>
+                    <option value="insurance">Insurance coverage</option>
+                    <option value="avoid-birth">Avoid giving birth during</option>
+                    <option value="outer-deadline">Outer deadline</option>
+                  </select>
+                </label>
+                <label>
+                  {boundary.type === "avoid-birth" ? "Avoid birth during" : boundary.type === "outer-deadline" ? "Deadline month" : "Coverage ends in"}
+                  <input type="month" value={boundary.month} onChange={(event) => updateBoundary(boundary.id, "month", event.target.value)} />
+                </label>
+                {boundary.type === "insurance" ? <label>
+                  Covers babies under this many months
+                  <input
+                    type="number"
+                    min="0"
+                    max="240"
+                    value={boundary.maximumBabyAgeMonths}
+                    onChange={(event) => updateBoundary(boundary.id, "maximumBabyAgeMonths", Math.max(0, Math.min(240, Number(event.target.value) || 0)))}
+                  />
+                </label> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+
+        <div className="boundary-analysis-list">
+          {boundaryAnalyses.map((boundary) => (
+            <article className="planner-note-box boundary-analysis" key={`boundary-analysis-${boundary.id}`}>
+              <p><strong>{boundary.name || "This boundary"}</strong>: {boundary.type === "insurance" ? `coverage ends ${formatMonthLabel(boundary.month)} and covers babies under ${boundary.maximumBabyAgeMonths} months` : boundary.type === "avoid-birth" ? `do not give birth during ${formatMonthLabel(boundary.month)}` : `final-baby deadline is ${formatMonthLabel(boundary.month)}`}. </p>
+              {boundary.checks.map((check) => (
+                <p key={`${boundary.id}-${check.childNumber}`}>
+                  Baby #{check.childNumber}: <strong>{!check.appliesToChild ? "APPROVED: not affected at expiration" : check.isApproved ? `APPROVED${boundary.type === "insurance" ? `: covered at ${formatBabyAge(check.monthsAtExpiration)}` : ""}` : `DECLINED${boundary.type === "insurance" ? `: over the age limit at ${formatBabyAge(check.monthsAtExpiration)}` : ""}`}</strong>
+                </p>
+              ))}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="wellness-card approval-timeline-card">
+        <div className="dream-board-header">
+          <p className="dream-mini-label">Decision view</p>
+          <h2>Approve / Decline Timeline</h2>
+        </div>
+        <p className="wellness-muted">Each row shows whether every future plan and boundary is approved for that child&apos;s projected timing.</p>
+        <div className="approval-timeline">
+          {approvalTimeline.map((child) => (
+            <article className="approval-timeline-row" key={`timeline-${child.childNumber}`}>
+              <div className="approval-timeline-child">
+                <p className="dream-mini-label">Baby #{child.childNumber}</p>
+                <h3>{formatMonthLabel(child.arrivalMonth)}</h3>
+                <p>Projected arrival month</p>
+              </div>
+              <div className="approval-timeline-decisions">
+                {child.decisions.map((decision) => (
+                  <div className={`approval-decision ${decision.approved ? "is-approved" : "is-declined"}`} key={decision.id}>
+                    <span>{decision.label}</span>
+                    <strong>{decision.approved ? "APPROVED" : "DECLINED"}</strong>
+                    <small>{formatMonthLabel(decision.month)}</small>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="wellness-card dream-scenario-card">
@@ -660,7 +975,7 @@ function DreamPregnancySection({ username }) {
 
           <article className="dream-scenario-pill">
             <p className="dream-mini-label">Your outer boundary</p>
-            <h3>{formatMonthLabel(latestFinalBabyMonth)}</h3>
+            <h3>{formatMonthLabel(familyDeadlineMonth)}</h3>
             <p>
               {deadlineCushionMonths == null
                 ? "Set a deadline to compare your final-baby timing."
@@ -677,12 +992,14 @@ function DreamPregnancySection({ username }) {
           </p>
           {finalPlannedBaby ? (
             <p>
-              With a {ageGapMonths}-month gap, baby #{finalPlannedBaby.childNumber} would likely need conception around <strong>{formatMonthLabel(finalPlannedBaby.conceptionMonth)}</strong>, with arrival around <strong>{formatMonthLabel(finalPlannedBaby.arrivalMonth)}</strong>.
+              With the planned gaps, baby #{finalPlannedBaby.childNumber} would likely need conception around <strong>{formatMonthLabel(finalPlannedBaby.conceptionMonth)}</strong>, with arrival around <strong>{formatMonthLabel(finalPlannedBaby.arrivalMonth)}</strong>.
             </p>
           ) : null}
           {finalPlannedBaby ? (
             <p>
-              To welcome baby #{finalPlannedBaby.childNumber} by <strong>{formatMonthLabel(latestFinalBabyMonth)}</strong>, conception would likely need to happen by <strong>{formatMonthLabel(latestFinalBabyConceptionMonth)}</strong>.
+              {birthDate
+                ? <>At age {finalBabyAgeLimit}, your final-baby deadline is <strong>{formatMonthLabel(familyDeadlineMonth)}</strong>, so conception would likely need to happen by <strong>{formatMonthLabel(latestFinalBabyConceptionMonth)}</strong>.</>
+                : "Set your birth date to calculate the final-baby deadline."}
             </p>
           ) : null}
         </div>
@@ -691,91 +1008,45 @@ function DreamPregnancySection({ username }) {
       <section className="wellness-card dream-plan-card">
         <h2>Future Plans That Shape The Timing</h2>
         <p className="wellness-muted">
-          A plan like {futurePlanName || "a trip"} can absolutely change the shape of this. This view checks whether {formatMonthLabel(futurePlanMonth)} works better with a baby who is at least {minimumBabyAgeMonths} months old, or while you are no more than about {maximumPregnancyWeeks} weeks pregnant.
+          Each plan is checked against every planned baby. A plan works for the full timeline only when every baby is compatible.
         </p>
 
-        <div className="dream-scenario-grid">
-          {futurePlanChecks.map((check) => (
-            <article className={`dream-scenario-pill ${check.worksWithBabyAge || check.worksWithPregnancy ? "is-match" : "is-tight"}`} key={`future-plan-${check.childNumber}`}>
-              <p className="dream-mini-label">{futurePlanName || "Future plan"} around baby #{check.childNumber}</p>
-              <h3>{formatMonthLabel(futurePlanMonth)}</h3>
-              <p>{check.summary}</p>
-              <p>
-                Baby age then: <strong>{check.monthsAfterArrival == null ? "-" : check.monthsAfterArrival < 0 ? "not born yet" : `${check.monthsAfterArrival} month${check.monthsAfterArrival === 1 ? "" : "s"}`}</strong>
-              </p>
-              <p>
-                Pregnancy timing then: <strong>{check.pregnancyWeeksAtPlan == null ? check.monthsAfterArrival != null && check.monthsAfterArrival > 0 ? "baby is already here" : "not pregnant yet" : `about ${check.pregnancyWeeksAtPlan} weeks`}</strong>
-              </p>
-            </article>
+        <div className="future-plan-analysis-list">
+          {futurePlanAnalyses.map((plan) => (
+            <section className="future-plan-analysis" key={`analysis-${plan.id}`}>
+              <div className="future-plan-analysis-header">
+                <div>
+                  <p className="dream-mini-label">{plan.name || "Future plan"}</p>
+                  <h3>{formatMonthLabel(plan.month)}</h3>
+                </div>
+                <strong className={plan.worksForAllBabies ? "future-plan-status is-yes" : "future-plan-status is-no"}>
+                  {plan.worksForAllBabies ? "Yes, works for everyone" : "No, not for everyone"}
+                </strong>
+              </div>
+
+              <div className="dream-scenario-grid">
+                {plan.checks.map((check) => {
+                  const worksForChild = check.worksWithBabyAge || check.worksWithPregnancy || check.isBeforeConception;
+                  return (
+                    <article className={`dream-scenario-pill ${worksForChild ? "is-match" : "is-tight"}`} key={`${plan.id}-${check.childNumber}`}>
+                      <p className="dream-mini-label">{plan.name || "Future plan"} around baby #{check.childNumber}</p>
+                      <h3>{formatMonthLabel(plan.month)}</h3>
+                      <p>{check.summary}</p>
+                      <p>
+                        Baby age then: <strong>{formatBabyAge(check.monthsAfterArrival)}</strong>
+                      </p>
+                      <p>
+                        Pregnancy timing then: <strong>{check.pregnancyWeeksAtPlan == null ? check.monthsAfterArrival != null && check.monthsAfterArrival > 0 ? "baby is already here" : "not pregnant yet" : `about ${check.pregnancyWeeksAtPlan} weeks`}</strong>
+                      </p>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
           ))}
         </div>
-
-        <div className="planner-note-box dream-timing-box">
-          {futurePlanMatches.length > 0 ? (
-            <p>
-              {futurePlanName || "This plan"} fits most naturally around baby #{futurePlanMatches[0].childNumber} in this version of the timeline.
-            </p>
-          ) : (
-            <p>
-              Right now, {futurePlanName || "this plan"} does not fit the sketch cleanly. Try shifting the family size, age gap, or target timing.
-            </p>
-          )}
-        </div>
       </section>
 
-      <section className="wellness-grid-2">
-        <article className="wellness-card dream-milestone-card">
-          <h2>Little Prompts To Play With</h2>
-          <ul>
-            {DREAM_MILESTONES.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-
-        <article className="wellness-card dream-vision-card">
-          <h2>Mini Vision Board</h2>
-          <label>
-            Names, themes, or tiny details you keep picturing
-            <textarea
-              value={nameIdeas}
-              onChange={(event) => setNameIdeas(event.target.value)}
-              placeholder="Names, nursery colors, favorite month, family traditions, little moments you imagine"
-            />
-          </label>
-
-          <label>
-            Why does this timing feel right in your life?
-            <textarea
-              value={visionNotes}
-              onChange={(event) => setVisionNotes(event.target.value)}
-              placeholder="Career timing, holidays, support system, finances, energy, home life, gut feeling"
-            />
-          </label>
-        </article>
-      </section>
-
-      <section className="wellness-grid-2 dream-notes-grid">
-        <article className="wellness-card">
-          <h2>Practical Notes</h2>
-          <textarea
-            className="dream-textarea"
-            value={planningNotes}
-            onChange={(event) => setPlanningNotes(event.target.value)}
-            placeholder="Provider questions, savings thoughts, leave ideas, travel plans, childcare, anything you want to remember"
-          />
-        </article>
-
-        <article className="wellness-card">
-          <h2>Open Notes</h2>
-          <textarea
-            className="dream-textarea"
-            value={openNotes}
-            onChange={(event) => setOpenNotes(event.target.value)}
-            placeholder="Anything else you want to capture about timing, feelings, plans, or possibilities"
-          />
-        </article>
-      </section>
     </div>
   );
 }
